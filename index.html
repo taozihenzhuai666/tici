@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0d0f14">
+<title>悬浮提词器</title>
+<style>
+/* Layout: one narrow column — mode switch, script, mode panel. Shooting is a full-screen layer: camera below, prompter pinned under the front lens. Single dark look like a camera app. */
+:root {
+  color-scheme: dark;
+  --bg: #0d0f14;
+  --panel: #171a22;
+  --line: #262a35;
+  --fg: #eef0f5;
+  --muted: #9aa1b2;
+  --accent: #ff5a3c;
+  --accent-fg: #ffffff;
+  --ok: #4cd68a;
+  --radius: 14px;
+  --font: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 16px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: calc(12px + env(safe-area-inset-top, 0px)) calc(28px + env(safe-area-inset-bottom, 0px));
+  -webkit-text-size-adjust: 100%;
+}
+[hidden] { display: none !important; }
+.wrap { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: .02em; }
+.rec-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); margin-right: 8px; vertical-align: 2px; }
+.hint { color: var(--muted); font-size: 14px; }
+
+.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 99px; padding: 4px; }
+.tabs button { min-height: 44px; border: 0; border-radius: 99px; background: transparent; color: var(--muted); font: 600 15px var(--font); }
+.tabs button[aria-selected=true] { background: var(--fg); color: var(--bg); }
+
+.stage { position: relative; border-radius: var(--radius); overflow: hidden; background: #000; border: 1px solid var(--line); }
+.stage canvas { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; max-width: 100%; }
+.stage video { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; }
+.badge { position: absolute; right: 10px; bottom: 10px; font-size: 12px; font-family: var(--mono); color: var(--muted); background: rgba(0,0,0,.6); padding: 3px 8px; border-radius: 99px; }
+
+label.field { display: flex; flex-direction: column; gap: 8px; font-size: 15px; color: var(--muted); }
+textarea {
+  width: 100%; min-height: 180px; resize: vertical;
+  background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px; font: 17px/1.6 var(--font);
+}
+textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.panel { display: flex; flex-direction: column; gap: 16px; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 380px) { .row { grid-template-columns: 1fr; } }
+.ctl { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ctl .top { display: flex; justify-content: space-between; font-size: 14px; color: var(--muted); }
+.ctl .top b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
+.seg { display: flex; gap: 6px; }
+.seg button { flex: 1; min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--fg); font: 15px var(--font); }
+.seg button[aria-pressed=true] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+
+.go { min-height: 56px; border: 0; border-radius: 99px; background: var(--accent); color: var(--accent-fg); font: 600 18px var(--font); letter-spacing: .04em; cursor: pointer; }
+.go:disabled { opacity: .55; }
+.go.stop { background: var(--panel); color: var(--fg); border: 1px solid var(--line); }
+.bar { height: 4px; background: var(--line); border-radius: 99px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+.status { font-size: 14px; color: var(--muted); min-height: 1.4em; }
+.status.ok { color: var(--ok); }
+.status.err { color: var(--accent); }
+
+.steps { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; font-size: 15px; line-height: 1.65; }
+.steps h2 { font-size: 15px; margin: 0 0 6px; color: var(--muted); font-weight: 600; letter-spacing: .04em; }
+.steps ol { margin: 0; padding-left: 1.3em; }
+
+/* ---------- shooting layer ---------- */
+#shoot { position: fixed; inset: 0; z-index: 10; background: #000; overflow: hidden; touch-action: manipulation; }
+#cam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.prompter {
+  position: absolute; left: 0; right: 0; top: 0;
+  height: calc(env(safe-area-inset-top, 0px) + var(--ph, 34vh));
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) max(18px, env(safe-area-inset-right, 0px)) 0 max(18px, env(safe-area-inset-left, 0px));
+  background: linear-gradient(rgba(0,0,0,.78) 78%, rgba(0,0,0,0));
+  overflow: hidden;
+}
+.ptext { position: relative; font-weight: 600; line-height: 1.45; color: rgba(255,255,255,.95); white-space: pre-wrap; word-break: break-all; will-change: transform; }
+.ptext span.d { color: rgba(255,255,255,.32); }
+.ptext span.cur { color: #fff; background: rgba(255,90,60,.55); border-radius: 4px; }
+@media (prefers-reduced-motion: no-preference) { .ptext { transition: transform .35s ease-out; } }
+.readline { position: absolute; left: 4px; width: 0; height: 0; border-top: 9px solid transparent; border-bottom: 9px solid transparent; border-left: 11px solid var(--accent); }
+
+.heard {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  top: calc(env(safe-area-inset-top, 0px) + var(--ph, 34vh) + 6px);
+  max-width: 90%; font-size: 13px; color: #fff; background: rgba(0,0,0,.5); padding: 4px 10px; border-radius: 99px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.heard i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; vertical-align: 0; }
+.heard.on i { background: var(--ok); }
+
+.sbar {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 14px max(16px, env(safe-area-inset-right, 0px)) calc(18px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px;
+  background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.6));
+}
+.sbar .l, .sbar .r { display: flex; gap: 8px; align-items: center; }
+.sbar .r { justify-content: flex-end; }
+.chip { min-height: 48px; min-width: 48px; padding: 0 12px; white-space: nowrap; border-radius: 99px; border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.45); color: #fff; font: 600 15px var(--font); }
+.recbtn { width: 76px; height: 76px; border-radius: 50%; border: 5px solid #fff; background: transparent; padding: 0; display: grid; place-items: center; }
+.recbtn i { display: block; width: 58px; height: 58px; border-radius: 50%; background: var(--accent); }
+.recbtn.on i { width: 28px; height: 28px; border-radius: 6px; }
+@media (prefers-reduced-motion: no-preference) { .recbtn i { transition: all .2s; } }
+.timer { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(112px + env(safe-area-inset-bottom, 0px)); font: 600 15px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 10px; border-radius: 8px; font-variant-numeric: tabular-nums; }
+.timer.on { background: var(--accent); }
+
+.done {
+  position: absolute; inset: auto 0 0 0; z-index: 2;
+  padding: 18px max(16px, env(safe-area-inset-right, 0px)) calc(22px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  background: var(--panel); border-radius: 20px 20px 0 0; display: flex; flex-direction: column; gap: 12px;
+}
+.done video { width: 100%; max-height: 42vh; border-radius: 12px; background: #000; }
+.done .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.done a { color: var(--muted); font-size: 14px; text-align: center; }
+.toast { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,.75); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 15px; max-width: 80%; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="rec-dot"></span>悬浮提词器</h1>
+    <span class="hint" id="dur"></span>
+  </header>
+
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" id="tabFollow" aria-selected="true">边说边滚</button>
+    <button type="button" role="tab" id="tabPip" aria-selected="false">悬浮小窗</button>
+  </div>
+
+  <label class="field" for="script">台词
+    <textarea id="script" placeholder="把台词粘贴到这里"></textarea>
+  </label>
+
+  <!-- 模式一：在本页拍，跟着声音滚动 -->
+  <section class="panel" id="pFollow">
+    <div class="ctl">
+      <div class="top"><span>字号</span></div>
+      <div class="seg" id="fsize">
+        <button type="button" data-v="24">小</button>
+        <button type="button" data-v="30" aria-pressed="true">中</button>
+        <button type="button" data-v="38">大</button>
+      </div>
+    </div>
+    <button class="go" id="openCam" type="button">打开前置摄像头</button>
+    <div class="status" id="fst"></div>
+    <div class="steps">
+      <h2>怎么用</h2>
+      <ol>
+        <li>台词显示在屏幕最上面，贴着前置镜头，看字就像在看镜头。</li>
+        <li>点红色按钮开始录像，正常说话就行。说到哪，台词就滚到哪；停下来它也停。</li>
+        <li>念错、跳过一两句也没关系，它会找回你在读的位置。点台词里的任何一个字，也能直接跳过去。</li>
+        <li>听不清的时候，可以点左下角切到“匀速”。</li>
+        <li>录完点“保存视频”，在弹出的菜单里选“存储视频”就进了相册。</li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- 模式二：画中画小窗浮在系统相机上（固定速度） -->
+  <section class="panel" id="pPip" hidden>
+    <div class="stage">
+      <canvas id="cv" width="960" height="540"></canvas>
+      <video id="vid" playsinline muted webkit-playsinline></video>
+      <span class="badge" id="badge">预览</span>
+    </div>
+    <div class="row">
+      <div class="ctl">
+        <div class="top"><span>滚动速度</span><b id="spdv">每秒 4 字</b></div>
+        <input type="range" id="spd" min="2" max="9" step="0.5" value="4">
+      </div>
+      <div class="ctl">
+        <div class="top"><span>字号</span></div>
+        <div class="seg" id="size">
+          <button type="button" data-v="56">小</button>
+          <button type="button" data-v="72" aria-pressed="true">中</button>
+          <button type="button" data-v="92">大</button>
+        </div>
+      </div>
+    </div>
+    <button class="go" id="go" type="button">准备提词</button>
+    <div class="bar" id="bar" hidden><i id="barI"></i></div>
+    <div class="status" id="st"></div>
+    <div class="steps">
+      <h2>怎么用（固定速度，可配系统相机拍 4K）</h2>
+      <ol>
+        <li>调好速度和字号，点“准备提词”，再点“开始悬浮”。</li>
+        <li>回到桌面打开相机，切到前置“视频”，小窗会浮在上面。</li>
+        <li>把小窗拖到屏幕最上方贴着镜头，双指捏可放大，点一下有暂停按钮。开头有 3 秒倒数。</li>
+      </ol>
+    </div>
+  </section>
+</div>
+
+<!-- 拍摄层 -->
+<div id="shoot" hidden>
+  <video id="cam" playsinline muted autoplay webkit-playsinline></video>
+  <div class="prompter" id="prompter">
+    <div class="readline" id="readline"></div>
+    <div class="ptext" id="ptext"></div>
+  </div>
+  <div class="heard" id="heard"><i></i><span id="heardT">点红色按钮开始</span></div>
+  <div class="timer" id="timer">00:00</div>
+  <div class="sbar">
+    <div class="l">
+      <button class="chip" id="closeShoot" type="button">关闭</button>
+      <button class="chip" id="modeBtn" type="button">跟声音</button>
+    </div>
+    <button class="recbtn" id="recBtn" type="button" aria-label="开始录像"><i></i></button>
+    <div class="r">
+      <button class="chip" id="smaller" type="button" aria-label="字小一点">A-</button>
+      <button class="chip" id="bigger" type="button" aria-label="字大一点">A+</button>
+    </div>
+  </div>
+  <div class="done" id="done" hidden>
+    <video id="playback" playsinline controls webkit-playsinline></video>
+    <div class="btns">
+      <button class="go stop" id="retake" type="button">重拍</button>
+      <button class="go" id="saveBtn" type="button">保存视频</button>
+    </div>
+    <a id="dl" href="#" hidden>保存不了？点这里打开视频，再长按保存</a>
+  </div>
+  <div class="toast" id="toast" hidden></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.min.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const load = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const save = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+  const SAMPLE = '（示例台词，换成你自己的）\n大家好。\n今天想跟大家聊一聊，孩子做数学题总是粗心，到底是怎么回事。\n其实很多时候不是不会，而是没有把题目读完。\n我们家现在的办法很简单：先圈题，再做题。';
+  const ta = $('script');
+  ta.value = load('tici.script') ?? SAMPLE;
+  ta.addEventListener('input', () => save('tici.script', ta.value));
+
+  function pickSeg(groupId, value, onPick) {
+    const btns = document.querySelectorAll(`#${groupId} button`);
+    btns.forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.v === value)));
+    btns.forEach(b => b.addEventListener('click', () => {
+      btns.forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      onPick(+b.dataset.v);
+    }));
+  }
+
+  // ---------- tabs ----------
+  function showTab(which) {
+    $('tabFollow').setAttribute('aria-selected', String(which === 'follow'));
+    $('tabPip').setAttribute('aria-selected', String(which === 'pip'));
+    $('pFollow').hidden = which !== 'follow';
+    $('pPip').hidden = which !== 'pip';
+    save('tici.tab', which);
+    window.dispatchEvent(new Event('tici-tab'));
+  }
+  $('tabFollow').onclick = () => showTab('follow');
+  $('tabPip').onclick = () => showTab('pip');
+
+  /* =====================================================================
+     模式一：边说边滚
+     ===================================================================== */
+  const DIGITS = '零一二三四五六七八九';
+  const isWord = ch => /[\p{L}\p{N}]/u.test(ch);
+  const normCh = ch => /[0-9]/.test(ch) ? DIGITS[+ch] : ch.toLowerCase();
+  const normStr = s => [...s].filter(isWord).map(normCh);
+
+  let fsize = +(load('tici.fsize') || 30);
+  pickSeg('fsize', fsize, v => { fsize = v; save('tici.fsize', String(v)); });
+
+  let stream = null, rec = null, chunks = [], recStart = 0, timerId = 0;
+  let norm = [], normSpans = [], pos = 0, shownPos = -1;
+  let follow = true, recog = null, listening = false, heardBase = '';
+  let evenTimer = 0, lastBlob = null, wakeLock = null;
+
+  function buildPrompter() {
+    const box = $('ptext'); box.innerHTML = ''; norm = []; normSpans = [];
+    const frag = document.createDocumentFragment();
+    for (const ch of ta.value.replace(/\r/g, '')) {
+      if (ch === '\n') { frag.appendChild(document.createTextNode('\n')); continue; }
+      const s = document.createElement('span'); s.textContent = ch;
+      if (isWord(ch)) { s.dataset.i = norm.length; norm.push(normCh(ch)); normSpans.push(s); }
+      frag.appendChild(s);
+    }
+    box.appendChild(frag);
+    box.style.fontSize = fsize + 'px';
+    pos = 0; shownPos = -1; render(true);
+  }
+
+  // where the reading line sits inside the prompter (second line)
+  const readY = () => Math.round(fsize * 1.45 * 1.0);
+
+  function render(force) {
+    if (!normSpans.length) return;
+    const p = Math.min(pos, normSpans.length - 1);
+    if (!force && p === shownPos) return;
+    // mark read / current
+    const from = Math.max(0, Math.min(p, shownPos < 0 ? 0 : shownPos) - 1);
+    const to = Math.max(p, shownPos) + 1;
+    for (let i = (force ? 0 : from); i < (force ? normSpans.length : Math.min(to, normSpans.length)); i++) {
+      normSpans[i].className = i < p ? 'd' : (i === p ? 'cur' : '');
+    }
+    shownPos = p;
+    const span = normSpans[p];
+    const y = span.offsetTop;
+    $('ptext').style.transform = `translateY(${readY() - y}px)`;
+    const rl = $('readline');
+    rl.style.top = `calc(env(safe-area-inset-top, 0px) + 8px + ${readY() + fsize * 1.45 / 2 - 9}px)`;
+  }
+
+  // LCS length between two short arrays
+  function lcs(a, b) {
+    const m = a.length, n = b.length; let prev = new Array(n + 1).fill(0), cur = new Array(n + 1).fill(0);
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+      [prev, cur] = [cur, prev];
+    }
+    return prev[n];
+  }
+
+  // find where in the script the last few heard characters end
+  function align(heard) {
+    const tail = heard.slice(-10);
+    if (tail.length < 3) return;
+    const L = tail.length + 4;
+    const lo = Math.max(tail.length - 2, pos - 20), hi = Math.min(norm.length, pos + 160);
+    let best = -1, bestE = -1;
+    for (let e = lo; e <= hi; e++) {
+      const seg = norm.slice(Math.max(0, e - L), e);
+      let s = lcs(tail, seg);
+      if (seg[seg.length - 1] === tail[tail.length - 1]) s += 0.6;        // ends on the same char
+      else if (seg[seg.length - 1] === tail[tail.length - 2]) s += 0.3;
+      s -= Math.abs(e - pos) * 0.004;                                     // prefer staying close
+      if (e < pos) s -= 0.5;                                              // going back needs a clearer match
+      if (s > best) { best = s; bestE = e; }
+    }
+    const need = Math.max(3, Math.ceil(tail.length * 0.55));
+    if (best >= need && bestE >= 0) {
+      pos = Math.max(0, Math.min(norm.length - 1, bestE));
+      render();
+    }
+  }
+
+  function setHeard(text, on) {
+    $('heardT').textContent = text;
+    $('heard').classList.toggle('on', !!on);
+  }
+  function toast(msg, ms = 2600) {
+    const t = $('toast'); t.textContent = msg; t.hidden = false;
+    clearTimeout(toast._t); toast._t = setTimeout(() => t.hidden = true, ms);
+  }
+
+  // ---------- speech recognition (Apple, built in) ----------
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  function startListen() {
+    if (!SR) { toast('这个浏览器听不了声音，已切到匀速'); setFollow(false); return; }
+    if (listening) return;
+    recog = new SR();
+    recog.lang = 'zh-CN'; recog.continuous = true; recog.interimResults = true; recog.maxAlternatives = 1;
+    heardBase = '';
+    recog.onresult = e => {
+      let txt = '';
+      for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
+      const n = normStr(txt);
+      setHeard('听到：' + txt.slice(-14), true);
+      if (follow) align(n);
+    };
+    recog.onerror = e => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        listening = false; setFollow(false);
+        toast('没拿到语音识别权限，已切到匀速。可在 设置 › Safari 里打开麦克风和语音识别');
+      } else if (e.error === 'audio-capture') {
+        listening = false; setFollow(false);
+        toast('麦克风被录像占用，听不到声音，已切到匀速');
+      }
+    };
+    recog.onend = () => {
+      // iOS stops every so often; keep going while we still want to listen
+      if (listening) { try { recog.start(); } catch (e) { setTimeout(() => listening && recog && recog.start(), 300); } }
+      else setHeard(follow ? '没在听' : '匀速滚动中', false);
+    };
+    listening = true;
+    try { recog.start(); setHeard('在听…', true); } catch (e) { listening = false; }
+  }
+  function stopListen() {
+    listening = false;
+    if (recog) { try { recog.stop(); } catch (e) {} recog = null; }
+  }
+
+  // ---------- even-speed fallback ----------
+  function setFollow(on) {
+    follow = on;
+    $('modeBtn').textContent = on ? '跟声音' : '匀速';
+    clearInterval(evenTimer);
+    if (!on && rec && rec.state === 'recording') startEven();
+    if (on && rec && rec.state === 'recording') startListen();
+    if (!on) setHeard('匀速滚动中', false);
+  }
+  function startEven() {
+    clearInterval(evenTimer);
+    const cps = +(load('tici.speed') || 4);
+    evenTimer = setInterval(() => { pos = Math.min(norm.length - 1, pos + cps / 4); render(); }, 250);
+  }
+  $('modeBtn').onclick = () => setFollow(!follow);
+
+  // tap a character to jump there
+  $('ptext').addEventListener('click', e => {
+    const i = e.target.dataset && e.target.dataset.i;
+    if (i != null) { pos = +i; render(); }
+  });
+  function resize(d) {
+    fsize = Math.max(20, Math.min(48, fsize + d)); save('tici.fsize', String(fsize));
+    $('ptext').style.fontSize = fsize + 'px'; shownPos = -1; render(true);
+  }
+  $('smaller').onclick = () => resize(-3);
+  $('bigger').onclick = () => resize(3);
+
+  // ---------- camera ----------
+  async function openCam() {
+    $('fst').textContent = ''; $('fst').className = 'status';
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      $('fst').textContent = '这个浏览器打不开摄像头，请用 iPhone 自带的 Safari 打开。'; $('fst').className = 'status err'; return;
+    }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+        audio: { echoCancellation: true, noiseSuppression: true },
+      });
+    } catch (e) {
+      $('fst').textContent = '没打开摄像头：请在弹窗里点“允许”，或到 设置 › Safari › 相机/麦克风 里改成允许。';
+      $('fst').className = 'status err'; return;
+    }
+    $('cam').srcObject = stream;
+    $('shoot').hidden = false; $('done').hidden = true;
+    document.body.style.overflow = 'hidden';
+    buildPrompter();
+    setFollow(true);
+    setHeard('点红色按钮开始', false);
+    try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+  }
+  $('openCam').onclick = openCam;
+
+  function closeShoot() {
+    stopRec(true);
+    stopListen(); clearInterval(evenTimer);
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null; $('cam').srcObject = null;
+    $('shoot').hidden = true; document.body.style.overflow = '';
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  }
+  $('closeShoot').onclick = closeShoot;
+
+  function pickType() {
+    const list = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
+    return list.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+  }
+  function startRec() {
+    if (!stream) return;
+    const type = pickType();
+    try { rec = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: 8_000_000 } : undefined); }
+    catch (e) { toast('这个浏览器录不了像'); return; }
+    chunks = [];
+    rec.ondataavailable = e => e.data && e.data.size && chunks.push(e.data);
+    rec.onstop = onRecStop;
+    rec.start(1000);
+    recStart = Date.now();
+    $('recBtn').classList.add('on'); $('recBtn').setAttribute('aria-label', '停止录像');
+    $('timer').classList.add('on');
+    timerId = setInterval(() => {
+      const s = Math.floor((Date.now() - recStart) / 1000);
+      $('timer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+    }, 500);
+    if (follow) startListen(); else startEven();
+  }
+  let discard = false;
+  function stopRec(drop) {
+    discard = !!drop;
+    clearInterval(timerId); clearInterval(evenTimer); stopListen();
+    $('recBtn').classList.remove('on'); $('recBtn').setAttribute('aria-label', '开始录像');
+    $('timer').classList.remove('on');
+    if (rec && rec.state !== 'inactive') rec.stop();
+  }
+  function onRecStop() {
+    if (discard) { chunks = []; return; }
+    const type = (rec && rec.mimeType) || 'video/mp4';
+    lastBlob = new Blob(chunks, { type });
+    const url = URL.createObjectURL(lastBlob);
+    $('playback').src = url;
+    $('dl').href = url; $('dl').hidden = false;
+    $('done').hidden = false;
+    setHeard('录好了', false);
+  }
+  $('recBtn').onclick = () => { if (rec && rec.state === 'recording') stopRec(false); else startRec(); };
+
+  $('retake').onclick = () => {
+    $('done').hidden = true; $('playback').removeAttribute('src');
+    pos = 0; shownPos = -1; render(true); $('timer').textContent = '00:00';
+    setHeard('点红色按钮开始', false);
+  };
+  $('saveBtn').onclick = async () => {
+    if (!lastBlob) return;
+    const ext = lastBlob.type.includes('webm') ? 'webm' : 'mp4';
+    const d = new Date(), stamp = `${d.getMonth() + 1}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
+    const file = new File([lastBlob], `提词录像-${stamp}.${ext}`, { type: lastBlob.type });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === 'AbortError') return; }
+    }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name;
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+
+  /* =====================================================================
+     模式二：悬浮小窗（画中画，固定速度）
+     ===================================================================== */
+  const W = 960, H = 540, FPS = 24, LEAD = 3, TAIL = 2, PAD_X = 48, TOP = 70;
+  const cv = $('cv'), ctx = cv.getContext('2d'), vid = $('vid');
+  const spd = $('spd'), go = $('go'), st = $('st');
+  let fontSize = +(load('tici.size') || 72), built = null, dirty = true, previewT = 0;
+  spd.value = load('tici.speed') || spd.value;
+  pickSeg('size', fontSize, v => { fontSize = v; markDirty(); });
+  const fam = () => getComputedStyle(document.body).fontFamily;
+
+  function wrapLines(text) {
+    ctx.font = `600 ${fontSize}px ${fam()}`;
+    const maxW = W - PAD_X * 2, out = [];
+    for (const para of text.replace(/\r/g, '').split('\n')) {
+      if (!para.trim()) { out.push(''); continue; }
+      let line = '';
+      for (const ch of para) {
+        if (ctx.measureText(line + ch).width > maxW && line) {
+          if (/[，。！？、；：,.!?;:”’）)]/.test(ch)) { line += ch; out.push(line); line = ''; continue; }
+          out.push(line); line = ch;
+        } else line += ch;
+      }
+      if (line) out.push(line);
+    }
+    return out;
+  }
+  function plan() {
+    const lines = wrapLines(ta.value.trim() || ' ');
+    const lh = Math.round(fontSize * 1.45);
+    const chars = [...ta.value.replace(/\s/g, '')].length || 1;
+    const cpl = chars / (lines.filter(Boolean).length || 1);
+    const pxPerSec = (+spd.value / cpl) * lh;
+    const total = LEAD + lines.length * lh / pxPerSec + TAIL;
+    return { lines, lh, pxPerSec, total, frames: Math.ceil(total * FPS) };
+  }
+  function draw(p, t, g = ctx) {
+    g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+    g.font = `600 ${fontSize}px ${fam()}`; g.textBaseline = 'top';
+    const off = Math.max(0, t - LEAD) * p.pxPerSec, ry = TOP + p.lh * 0.5;
+    p.lines.forEach((ln, i) => {
+      const y = TOP + i * p.lh - off;
+      if (y < -p.lh || y > H) return;
+      const d = Math.abs(y + p.lh / 2 - ry) / H;
+      g.fillStyle = `rgba(255,255,255,${Math.max(0.35, 1 - d * 1.4).toFixed(3)})`;
+      g.fillText(ln, PAD_X, y);
+    });
+    g.fillStyle = '#ff5a3c';
+    g.beginPath(); g.moveTo(14, ry - 12); g.lineTo(30, ry); g.lineTo(14, ry + 12); g.fill();
+    if (t < LEAD) {
+      g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(0, 0, W, H);
+      g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.font = `700 220px ${fam()}`; g.fillText(String(Math.ceil(LEAD - t)), W / 2, H / 2);
+      g.textAlign = 'left';
+    }
+  }
+
+  let building = false, last = performance.now();
+  function tick(now) {
+    if (!building && !$('pPip').hidden) {
+      const p = plan();
+      previewT = (previewT + (now - last) / 1000) % p.total;
+      draw(p, previewT);
+      $('dur').textContent = `约 ${Math.round(p.total)} 秒`;
+    }
+    last = now;
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+  window.addEventListener('tici-tab', () => { if ($('pPip').hidden) $('dur').textContent = ''; });
+
+  function markDirty() {
+    dirty = true; built = null;
+    if (!inPiP()) setBtn('准备提词', false);
+    save('tici.speed', spd.value); save('tici.size', String(fontSize));
+    $('spdv').textContent = `每秒 ${spd.value} 字`;
+  }
+  $('spdv').textContent = `每秒 ${spd.value} 字`;
+  ta.addEventListener('input', markDirty);
+  spd.addEventListener('input', () => { previewT = 0; markDirty(); });
+
+  function setBtn(text, stop) { go.textContent = text; go.classList.toggle('stop', !!stop); go.disabled = false; }
+  function say(msg, cls) { st.textContent = msg; st.className = 'status' + (cls ? ' ' + cls : ''); }
+  function progress(f) { $('bar').hidden = f == null; $('barI').style.width = ((f || 0) * 100).toFixed(1) + '%'; }
+
+  async function buildWebCodecs(p) {
+    const muxer = new Mp4Muxer.Muxer({ target: new Mp4Muxer.ArrayBufferTarget(), video: { codec: 'avc', width: W, height: H }, fastStart: 'in-memory' });
+    // draw on a detached canvas: reading frames back from the on-screen one is slow
+    const eCanvas = document.createElement('canvas'); eCanvas.width = W; eCanvas.height = H;
+    const ec = eCanvas.getContext('2d');
+    let err = null, outN = 0, wake = null;
+    const enc = new VideoEncoder({
+      output: (c, m) => { try { muxer.addVideoChunk(c, m); } catch (e) { err = e; } outN++; if (outN % 10 === 0) progress(outN / p.frames); },
+      error: e => { err = e; if (wake) wake(); },
+    });
+    const cfg = { codec: 'avc1.42001f', width: W, height: H, bitrate: 1_200_000, framerate: FPS };
+    const sup = await VideoEncoder.isConfigSupported(cfg);
+    if (!sup.supported) throw new Error('不支持 H.264 编码');
+    enc.configure(cfg);
+    enc.addEventListener('dequeue', () => { if (wake) { const w = wake; wake = null; w(); } });
+    for (let i = 0; i < p.frames; i++) {
+      if (err) throw err;
+      draw(p, i / FPS, ec);
+      const fr = new VideoFrame(eCanvas, { timestamp: Math.round(i * 1e6 / FPS), duration: Math.round(1e6 / FPS) });
+      enc.encode(fr, { keyFrame: i % (FPS * 2) === 0 });
+      fr.close();
+      // keep the queue short so memory stays low; some encoders hold a batch of frames before emitting, so never block for long
+      for (let n = 0; enc.encodeQueueSize > 12 && !err && n < 20; n++) await new Promise(r => { wake = r; setTimeout(r, 50); });
+      if (i % 8 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+    await enc.flush(); enc.close();
+    if (err) throw err;
+    muxer.finalize();
+    return new Blob([muxer.target.buffer], { type: 'video/mp4' });
+  }
+  async function buildRecorder(p) {
+    const type = ['video/mp4', 'video/webm'].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+    if (!type || !cv.captureStream) throw new Error('这个浏览器做不了视频');
+    const s = cv.captureStream(FPS), r = new MediaRecorder(s, { mimeType: type }), parts = [];
+    r.ondataavailable = e => e.data.size && parts.push(e.data);
+    const done = new Promise(res => r.onstop = res);
+    r.start(500);
+    const t0 = performance.now();
+    await new Promise(res => {
+      const step = () => {
+        const t = (performance.now() - t0) / 1000;
+        draw(p, Math.min(t, p.total)); progress(t / p.total);
+        if (t >= p.total) return res();
+        requestAnimationFrame(step);
+      };
+      step();
+    });
+    r.stop(); await done;
+    return new Blob(parts, { type });
+  }
+  async function build() {
+    building = true; go.disabled = true; go.textContent = '正在准备…'; say(''); progress(0);
+    const p = plan();
+    try {
+      let blob;
+      if (window.VideoEncoder && window.VideoFrame && window.Mp4Muxer) blob = await buildWebCodecs(p);
+      else { say(`要等约 ${Math.round(p.total)} 秒（实时生成）`); blob = await buildRecorder(p); }
+      if (vid.src) URL.revokeObjectURL(vid.src);
+      vid.src = URL.createObjectURL(blob);
+      vid.load();
+      await new Promise((res, rej) => { vid.onloadedmetadata = res; vid.onerror = () => rej(new Error('视频打不开')); });
+      built = p; dirty = false;
+      setBtn('开始悬浮'); say('准备好了，点“开始悬浮”', 'ok');
+    } catch (e) {
+      setBtn('准备提词'); say('没做成：' + (e.message || e) + '。请用 iPhone 自带的 Safari 打开再试。', 'err');
+    } finally { building = false; progress(null); }
+  }
+  function canPiP() {
+    return (document.pictureInPictureEnabled && vid.requestPictureInPicture) ||
+           (vid.webkitSupportsPresentationMode && vid.webkitSupportsPresentationMode('picture-in-picture'));
+  }
+  function inPiP() { return document.pictureInPictureElement === vid || vid.webkitPresentationMode === 'picture-in-picture'; }
+  function startPiP() {
+    vid.currentTime = 0;
+    const play = vid.play();
+    if (vid.requestPictureInPicture && document.pictureInPictureEnabled) {
+      vid.requestPictureInPicture().catch(e => {
+        if (vid.webkitSetPresentationMode) vid.webkitSetPresentationMode('picture-in-picture');
+        else say('打不开小窗：' + e.message, 'err');
+      });
+    } else if (vid.webkitSetPresentationMode) vid.webkitSetPresentationMode('picture-in-picture');
+    if (play && play.catch) play.catch(() => {});
+  }
+  function stopPiP() {
+    vid.pause();
+    if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
+    else if (vid.webkitSetPresentationMode) vid.webkitSetPresentationMode('inline');
+  }
+  const onPiP = () => {
+    if (inPiP()) { setBtn('停止悬浮', true); $('badge').textContent = '悬浮中'; say('现在去打开相机吧', 'ok'); }
+    else { setBtn(dirty ? '准备提词' : '开始悬浮'); $('badge').textContent = '预览'; }
+  };
+  vid.addEventListener('enterpictureinpicture', onPiP);
+  vid.addEventListener('leavepictureinpicture', onPiP);
+  vid.addEventListener('webkitpresentationmodechanged', onPiP);
+  go.addEventListener('click', () => {
+    if (inPiP()) return stopPiP();
+    if (!built || dirty) return build();
+    if (!canPiP()) return say('这里不能开小窗。请用 iPhone 自带的 Safari 打开这个网页。', 'err');
+    startPiP();
+  });
+
+  showTab(load('tici.tab') === 'pip' ? 'pip' : 'follow');
+
+  // test hook for the alignment logic (no answers here, safe to expose)
+  window.__tici = { align: t => { align(normStr(t)); return pos; }, setScript: s => { ta.value = s; buildPrompter(); }, get pos() { return pos; }, set pos(v) { pos = v; } };
+})();
+</script>
+</body>
+</html>
