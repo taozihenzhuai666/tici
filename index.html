@@ -680,6 +680,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
   }
   function inPiP() { return document.pictureInPictureElement === vid || vid.webkitPresentationMode === 'picture-in-picture'; }
   function startPiP() {
+    ambient();
     vid.currentTime = 0;
     const play = vid.play();
     if (vid.requestPictureInPicture && document.pictureInPictureEnabled) {
@@ -702,6 +703,25 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
   vid.addEventListener('enterpictureinpicture', onPiP);
   vid.addEventListener('leavepictureinpicture', onPiP);
   vid.addEventListener('webkitpresentationmodechanged', onPiP);
+
+  // Opening the Camera app interrupts other playback. Ask Safari to treat this as
+  // ambient (mixes with others), and if it still gets paused right after we leave
+  // the page, keep trying to resume for a few seconds.
+  function ambient() { try { if (navigator.audioSession) navigator.audioSession.type = 'ambient'; } catch (e) {} }
+  ambient();
+  let resumeUntil = 0, resumeTimer = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && inPiP() && !vid.paused) resumeUntil = Date.now() + 8000;
+  });
+  vid.addEventListener('pause', () => {
+    if (!inPiP() || Date.now() > resumeUntil || vid.ended) return;
+    clearInterval(resumeTimer);
+    resumeTimer = setInterval(() => {
+      if (!vid.paused || Date.now() > resumeUntil || !inPiP()) return clearInterval(resumeTimer);
+      ambient();
+      const p = vid.play(); if (p && p.catch) p.catch(() => {});
+    }, 400);
+  });
   go.addEventListener('click', () => {
     if (inPiP()) return stopPiP();
     if (!built || dirty) return build();
