@@ -120,6 +120,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
 @media (prefers-reduced-motion: no-preference) { .recbtn i { transition: all .2s; } }
 .timer { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(112px + env(safe-area-inset-bottom, 0px)); font: 600 15px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 10px; border-radius: 8px; font-variant-numeric: tabular-nums; }
 .timer.on { background: var(--accent); }
+.res { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(112px + env(safe-area-inset-bottom, 0px)); font: 600 13px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 8px; }
+.res:empty { display: none; }
 
 .done {
   position: absolute; inset: auto 0 0 0; z-index: 2;
@@ -216,6 +218,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
   </div>
   <div class="heard" id="heard"><i></i><span id="heardT">点红色按钮开始</span></div>
   <div class="timer" id="timer">00:00</div>
+  <div class="res" id="res"></div>
   <div class="sbar">
     <div class="l">
       <button class="chip" id="closeShoot" type="button">关闭</button>
@@ -459,6 +462,23 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
       $('fst').textContent = `没打开摄像头（${n || '未知'}${lastErr && lastErr.message ? '：' + lastErr.message : ''}）。${why}`;
       $('fst').className = 'status err'; return;
     }
+    // Safari often hands out 640×480 unless asked again after opening; ask for the biggest it will give
+    const vt = stream.getVideoTracks()[0];
+    const px = () => { const s = vt.getSettings(); return (s.width || 0) * (s.height || 0); };
+    for (const c of [
+      { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+      { width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } },
+      { width: { min: 1280 }, height: { min: 720 } },
+    ]) {
+      if (px() >= 1920 * 1080) break;
+      const before = px();
+      try { await vt.applyConstraints(Object.assign({ facingMode: 'user' }, c)); } catch (e) {}
+      if (px() < before) { try { await vt.applyConstraints({ width: { ideal: 1920 }, height: { ideal: 1080 } }); } catch (e) {} }
+    }
+    const s = vt.getSettings();
+    const short = Math.min(s.width || 0, s.height || 0);
+    $('res').textContent = short ? `${short}p` : '';
+    if (short && short < 720) toast(`摄像头只给了 ${s.width}×${s.height}，画面会糊`, 3500);
     if (!stream.getAudioTracks().length) toast('没拿到麦克风，录出来的视频会没有声音', 3500);
     $('cam').srcObject = stream;
     $('shoot').hidden = false; $('done').hidden = true;
@@ -487,7 +507,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
   function startRec() {
     if (!stream) return;
     const type = pickType();
-    try { rec = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: 8_000_000 } : undefined); }
+    try { rec = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: 12_000_000 } : undefined); }
     catch (e) { toast('这个浏览器录不了像'); return; }
     chunks = [];
     rec.ondataavailable = e => e.data && e.data.size && chunks.push(e.data);
