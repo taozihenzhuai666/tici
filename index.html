@@ -443,6 +443,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       $('fst').textContent = '这个浏览器打不开摄像头，请用 iPhone 自带的 Safari 打开。'; $('fst').className = 'status err'; return;
     }
+    // the floating-window mode may have set a play-only session, which blocks the mic
+    try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch (e) {}
     // try the nicest settings first, then simpler ones; some phones refuse a combination
     const tries = [
       { video: { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: true },
@@ -551,7 +553,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
       audioStarted = null;
     }
     let aTrack = null;
-    try { aTrack = (await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })).getAudioTracks()[0]; } catch (e) {}
+    try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch (e) {}
+    try { aTrack =(await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })).getAudioTracks()[0]; } catch (e) {}
     recAudio = aTrack;
     if (!aTrack) aTrack = stream.getAudioTracks().find(t => t.readyState === 'live') || null;
     const recStream = new MediaStream([stream.getVideoTracks()[0]].concat(aTrack ? [aTrack] : []));
@@ -799,7 +802,6 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
   // ambient (mixes with others), and if it still gets paused right after we leave
   // the page, keep trying to resume for a few seconds.
   function ambient() { try { if (navigator.audioSession) navigator.audioSession.type = 'ambient'; } catch (e) {} }
-  ambient();
   let resumeUntil = 0, resumeTimer = 0;
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden' && inPiP() && !vid.paused) resumeUntil = Date.now() + 8000;
