@@ -49,6 +49,11 @@ h1 { font-size: 22px; margin: 0; letter-spacing: .02em; }
 .badge { position: absolute; right: 10px; bottom: 10px; font-size: 12px; font-family: var(--mono); color: var(--muted); background: rgba(0,0,0,.6); padding: 3px 8px; border-radius: 99px; }
 
 label.field { display: flex; flex-direction: column; gap: 8px; font-size: 15px; color: var(--muted); }
+.field { display: flex; flex-direction: column; gap: 8px; }
+.fhead { display: flex; align-items: center; gap: 10px; font-size: 15px; color: var(--muted); }
+.fhead .count { flex: 1; font-size: 13px; font-variant-numeric: tabular-nums; }
+.mini { min-height: 36px; padding: 0 14px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--muted); font: 14px var(--font); }
+.mini.warn { color: var(--accent); border-color: var(--accent); }
 textarea {
   width: 100%; min-height: 180px; resize: vertical;
   background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: var(--radius);
@@ -108,21 +113,23 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
 .sbar {
   position: absolute; left: 0; right: 0; bottom: 0;
   padding: 14px max(16px, env(safe-area-inset-right, 0px)) calc(18px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
-  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px;
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 8px;
   background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.6));
 }
 .sbar .l, .sbar .r { display: flex; gap: 8px; align-items: center; }
 .sbar .r { justify-content: flex-end; }
+.sbar .recbtn { flex: 0 0 auto; margin: 0 calc(50% - 38px); }
 .chip { min-height: 48px; min-width: 48px; padding: 0 12px; white-space: nowrap; border-radius: 99px; border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.45); color: #fff; font: 600 15px var(--font); }
 .recbtn { width: 76px; height: 76px; border-radius: 50%; border: 5px solid #fff; background: transparent; padding: 0; display: grid; place-items: center; }
 .recbtn i { display: block; width: 58px; height: 58px; border-radius: 50%; background: var(--accent); }
+.recbtn:disabled { opacity: .6; }
 .recbtn.on i { width: 28px; height: 28px; border-radius: 6px; }
 @media (prefers-reduced-motion: no-preference) { .recbtn i { transition: all .2s; } }
-.timer { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(112px + env(safe-area-inset-bottom, 0px)); font: 600 15px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 10px; border-radius: 8px; font-variant-numeric: tabular-nums; }
+.timer { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(186px + env(safe-area-inset-bottom, 0px)); font: 600 15px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 10px; border-radius: 8px; font-variant-numeric: tabular-nums; }
 .timer.on { background: var(--accent); }
-.res { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(112px + env(safe-area-inset-bottom, 0px)); font: 600 13px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 8px; }
+.res { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(186px + env(safe-area-inset-bottom, 0px)); font: 600 13px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 8px; }
 .res:empty { display: none; }
-.mic { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(112px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 6px; font-size: 12px; color: #fff; background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 8px; }
+.mic { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(186px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 6px; font-size: 12px; color: #fff; background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 8px; }
 .mic b { display: block; width: 70px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.25); overflow: hidden; }
 .mic i { display: block; height: 100%; width: 0; background: var(--ok); }
 
@@ -155,9 +162,14 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
     <button type="button" role="tab" id="tabPip" aria-selected="false">悬浮小窗</button>
   </div>
 
-  <label class="field" for="script">台词
+  <div class="field">
+    <div class="fhead">
+      <label for="script">台词</label>
+      <span class="count" id="count"></span>
+      <button class="mini" id="clear" type="button">清空</button>
+    </div>
     <textarea id="script" placeholder="把台词粘贴到这里"></textarea>
-  </label>
+  </div>
 
   <!-- 模式一：在本页拍，跟着声音滚动 -->
   <section class="panel" id="pFollow">
@@ -231,14 +243,15 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
   <div class="mic" id="mic" hidden><span>声音</span><b><i id="micI"></i></b></div>
   <div class="sbar">
     <div class="l">
-      <button class="chip" id="closeShoot" type="button">关闭</button>
+      <button class="chip" id="closeShoot" type="button" aria-label="返回">‹ 返回</button>
       <button class="chip" id="modeBtn" type="button">跟声音</button>
+      <button class="chip" id="spdBtn" type="button" hidden>每秒 4 字</button>
     </div>
-    <button class="recbtn" id="recBtn" type="button" aria-label="开始录像"><i></i></button>
     <div class="r">
       <button class="chip" id="smaller" type="button" aria-label="字小一点">A-</button>
       <button class="chip" id="bigger" type="button" aria-label="字大一点">A+</button>
     </div>
+    <button class="recbtn" id="recBtn" type="button" aria-label="开始录像"><i></i></button>
   </div>
   <div class="done" id="done" hidden>
     <button class="grab" id="grab" type="button" aria-label="收起或展开"><span id="grabT">往下拖可以收起</span></button>
@@ -247,6 +260,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
       <button class="go stop" id="retake" type="button">重拍</button>
       <button class="go" id="saveBtn" type="button">保存视频</button>
     </div>
+    <button class="mini" id="doneBack" type="button">‹ 返回改台词</button>
     <a id="dl" href="#" hidden>保存不了？点这里打开视频，再长按保存</a>
   </div>
   <div class="toast" id="toast" hidden></div>
@@ -261,7 +275,29 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
   const SAMPLE = '（示例台词，换成你自己的）\n大家好。\n今天想跟大家聊一聊，孩子做数学题总是粗心，到底是怎么回事。\n其实很多时候不是不会，而是没有把题目读完。\n我们家现在的办法很简单：先圈题，再做题。';
   const ta = $('script');
   ta.value = load('tici.script') ?? SAMPLE;
-  ta.addEventListener('input', () => save('tici.script', ta.value));
+  ta.addEventListener('input', () => { save('tici.script', ta.value); count(); });
+
+  // word count and a rough length
+  function count() {
+    const n = [...ta.value].filter(ch => /[\p{L}\p{N}]/u.test(ch)).length;
+    const sec = Math.round(n / 4);
+    const len = sec < 60 ? `${sec} 秒` : `${Math.floor(sec / 60)} 分 ${String(sec % 60).padStart(2, '0')} 秒`;
+    $('count').textContent = n ? `${n} 字 · 约 ${len}` : '';
+  }
+  count();
+
+  // clear asks twice, so one stray tap can't wipe a long script
+  let clearArmed = 0;
+  const disarm = () => { clearArmed = 0; $('clear').textContent = '清空'; $('clear').classList.remove('warn'); };
+  $('clear').onclick = () => {
+    if (!clearArmed) {
+      $('clear').textContent = '再点一次清空'; $('clear').classList.add('warn');
+      clearArmed = setTimeout(disarm, 3000);
+      return;
+    }
+    clearTimeout(clearArmed); disarm();
+    ta.value = ''; save('tici.script', ''); count(); ta.dispatchEvent(new Event('input')); ta.focus();
+  };
 
   function pickSeg(groupId, value, onPick) {
     const btns = document.querySelectorAll(`#${groupId} button`);
@@ -417,9 +453,19 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
   }
 
   // ---------- even-speed fallback ----------
+  const SPEEDS = [3, 4, 5, 6, 7];
+  let speed = Math.round(+(load('tici.speed') || 4));
+  if (!SPEEDS.includes(speed)) speed = 4;
+  $('spdBtn').textContent = `每秒 ${speed} 字`;
+  $('spdBtn').onclick = () => {
+    speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length];
+    $('spdBtn').textContent = `每秒 ${speed} 字`;
+    if (rec && rec.state === 'recording' && !follow) startEven();
+  };
   function setFollow(on) {
     follow = on;
     $('modeBtn').textContent = on ? '跟声音' : '匀速';
+    $('spdBtn').hidden = on;
     clearInterval(evenTimer);
     if (!on && rec && rec.state === 'recording') startEven();
     if (on && rec && rec.state === 'recording') startListen();
@@ -427,7 +473,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
   }
   function startEven() {
     clearInterval(evenTimer);
-    const cps = +(load('tici.speed') || 4);
+    const cps = speed;
     evenTimer = setInterval(() => { pos = Math.min(norm.length - 1, pos + cps / 4); render(); }, 250);
   }
   $('modeBtn').onclick = () => setFollow(!follow);
@@ -514,6 +560,17 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
     if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
   }
   $('closeShoot').onclick = closeShoot;
+  // going back throws the take away, so ask twice unless it was saved
+  let backArmed = 0;
+  $('doneBack').onclick = () => {
+    if (!saved && !backArmed) {
+      $('doneBack').textContent = '视频还没保存，再点一次返回'; $('doneBack').classList.add('warn');
+      backArmed = setTimeout(() => { backArmed = 0; $('doneBack').textContent = '‹ 返回改台词'; $('doneBack').classList.remove('warn'); }, 3000);
+      return;
+    }
+    clearTimeout(backArmed); backArmed = 0; $('doneBack').textContent = '‹ 返回改台词'; $('doneBack').classList.remove('warn');
+    closeShoot();
+  };
 
   function pickType() {
     const list = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
@@ -550,6 +607,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
   async function startRec() {
     if (!stream || starting) return;
     starting = true;
+    $('recBtn').disabled = true; setHeard('准备中…', true);
     // must be created inside the tap
     try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {}
     // Start the recogniser first, then take a fresh mic track, so the recording
@@ -565,7 +623,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
     recAudio = aTrack;
     if (!aTrack) aTrack = stream.getAudioTracks().find(t => t.readyState === 'live') || null;
     const recStream = new MediaStream([stream.getVideoTracks()[0]].concat(aTrack ? [aTrack] : []));
-    starting = false;
+    starting = false; $('recBtn').disabled = false;
+    setHeard(follow ? '在听…说吧' : '匀速滚动中', follow);
     const type = pickType();
     try { rec = new MediaRecorder(recStream, type ? { mimeType: type, videoBitsPerSecond: 12_000_000, audioBitsPerSecond: 128_000 } : undefined); }
     catch (e) { toast('这个浏览器录不了像'); return; }
@@ -584,7 +643,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
     meter(aTrack);
     if (!follow) startEven();
   }
-  let discard = false;
+  let discard = false, saved = false;
   function stopRec(drop) {
     discard = !!drop;
     clearInterval(timerId); clearInterval(evenTimer); stopListen();
@@ -597,7 +656,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
   function onRecStop() {
     if (discard) { chunks = []; return; }
     const type = (rec && rec.mimeType) || 'video/mp4';
-    lastBlob = new Blob(chunks, { type });
+    lastBlob = new Blob(chunks, { type }); saved = false;
     const url = URL.createObjectURL(lastBlob);
     $('playback').src = url;
     $('dl').href = url; $('dl').hidden = false;
@@ -650,7 +709,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
     const d = new Date(), stamp = `${d.getMonth() + 1}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
     const file = new File([lastBlob], `提词录像-${stamp}.${ext}`, { type: lastBlob.type });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === 'AbortError') return; }
+      try { await navigator.share({ files: [file] }); saved = true; return; } catch (e) { if (e.name === 'AbortError') return; }
     }
     const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name;
     document.body.appendChild(a); a.click(); a.remove();
