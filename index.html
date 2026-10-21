@@ -434,15 +434,32 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       $('fst').textContent = '这个浏览器打不开摄像头，请用 iPhone 自带的 Safari 打开。'; $('fst').className = 'status err'; return;
     }
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
-        audio: { echoCancellation: true, noiseSuppression: true },
-      });
-    } catch (e) {
-      $('fst').textContent = '没打开摄像头：请在弹窗里点“允许”，或到 设置 › Safari › 相机/麦克风 里改成允许。';
+    // try the nicest settings first, then simpler ones; some phones refuse a combination
+    const tries = [
+      { video: { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: true },
+      { video: { facingMode: 'user' }, audio: true },
+      { video: true, audio: true },
+      { video: { facingMode: 'user' }, audio: false },
+    ];
+    let lastErr = null;
+    stream = null;
+    for (const c of tries) {
+      try { stream = await navigator.mediaDevices.getUserMedia(c); break; }
+      catch (e) { lastErr = e; if (e.name === 'NotAllowedError' || e.name === 'SecurityError') break; }
+    }
+    if (!stream) {
+      const n = lastErr ? lastErr.name : '';
+      const why = {
+        NotAllowedError: 'Safari 没给权限。点地址栏左边的“大小”图标 › 网站设置，把相机和麦克风改成“允许”；或到 设置 › App › Safari › 相机/麦克风 改成“询问”或“允许”。然后刷新网页再点一次。',
+        NotReadableError: '摄像头正被别的 App 占着。把相机 App 和别的录像 App 从后台划掉，再点一次。',
+        AbortError: '摄像头正被别的 App 占着。把相机 App 和别的录像 App 从后台划掉，再点一次。',
+        NotFoundError: '没找到摄像头。',
+        OverconstrainedError: '摄像头不支持这个设置。',
+      }[n] || '原因不明。';
+      $('fst').textContent = `没打开摄像头（${n || '未知'}${lastErr && lastErr.message ? '：' + lastErr.message : ''}）。${why}`;
       $('fst').className = 'status err'; return;
     }
+    if (!stream.getAudioTracks().length) toast('没拿到麦克风，录出来的视频会没有声音', 3500);
     $('cam').srcObject = stream;
     $('shoot').hidden = false; $('done').hidden = true;
     document.body.style.overflow = 'hidden';
