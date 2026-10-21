@@ -2,10 +2,14 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0d0f14">
+<meta name="apple-mobile-web-app-title" content="提词器">
+<link rel="apple-touch-icon" sizes="180x180" href="tici-icon-v1-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="tici-icon-v1-192.png">
+<link rel="manifest" href="manifest.webmanifest">
 <title>悬浮提词器</title>
 <style>
 /* Layout: one narrow column — mode switch, script, mode panel. Shooting is a full-screen layer: camera below, prompter pinned under the front lens. Single dark look like a camera app. */
@@ -24,7 +28,7 @@
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
 }
 * { box-sizing: border-box; }
-html, body { height: 100%; margin: 0; }
+html, body { height: 100%; margin: 0; touch-action: manipulation; }
 body {
   background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 16px;
   padding-left: max(16px, env(safe-area-inset-left, 0px));
@@ -39,14 +43,7 @@ h1 { font-size: 22px; margin: 0; letter-spacing: .02em; }
 .rec-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); margin-right: 8px; vertical-align: 2px; }
 .hint { color: var(--muted); font-size: 14px; }
 
-.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 99px; padding: 4px; }
-.tabs button { min-height: 44px; border: 0; border-radius: 99px; background: transparent; color: var(--muted); font: 600 15px var(--font); }
-.tabs button[aria-selected=true] { background: var(--fg); color: var(--bg); }
 
-.stage { position: relative; border-radius: var(--radius); overflow: hidden; background: #000; border: 1px solid var(--line); }
-.stage canvas { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; max-width: 100%; }
-.stage video { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; }
-.badge { position: absolute; right: 10px; bottom: 10px; font-size: 12px; font-family: var(--mono); color: var(--muted); background: rgba(0,0,0,.6); padding: 3px 8px; border-radius: 99px; }
 
 label.field { display: flex; flex-direction: column; gap: 8px; font-size: 15px; color: var(--muted); }
 .field { display: flex; flex-direction: column; gap: 8px; }
@@ -62,12 +59,9 @@ textarea {
 textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .panel { display: flex; flex-direction: column; gap: 16px; }
-.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-@media (max-width: 380px) { .row { grid-template-columns: 1fr; } }
-.ctl { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+@media (max-width: 380px) { .ctl { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .ctl .top { display: flex; justify-content: space-between; font-size: 14px; color: var(--muted); }
 .ctl .top b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
-input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
 .seg { display: flex; gap: 6px; }
 .seg button { flex: 1; min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--fg); font: 15px var(--font); }
 .seg button[aria-pressed=true] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
@@ -75,8 +69,6 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
 .go { min-height: 56px; border: 0; border-radius: 99px; background: var(--accent); color: var(--accent-fg); font: 600 18px var(--font); letter-spacing: .04em; cursor: pointer; }
 .go:disabled { opacity: .55; }
 .go.stop { background: var(--panel); color: var(--fg); border: 1px solid var(--line); }
-.bar { height: 4px; background: var(--line); border-radius: 99px; overflow: hidden; }
-.bar i { display: block; height: 100%; width: 0; background: var(--accent); }
 .status { font-size: 14px; color: var(--muted); min-height: 1.4em; }
 .status.ok { color: var(--ok); }
 .status.err { color: var(--accent); }
@@ -154,13 +146,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
 <div class="wrap">
   <header>
     <h1><span class="rec-dot"></span>悬浮提词器</h1>
-    <span class="hint" id="dur"></span>
   </header>
-
-  <div class="tabs" role="tablist">
-    <button type="button" role="tab" id="tabFollow" aria-selected="true">边说边滚</button>
-    <button type="button" role="tab" id="tabPip" aria-selected="false">悬浮小窗</button>
-  </div>
 
   <div class="field">
     <div class="fhead">
@@ -171,8 +157,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
     <textarea id="script" placeholder="把台词粘贴到这里"></textarea>
   </div>
 
-  <!-- 模式一：在本页拍，跟着声音滚动 -->
-  <section class="panel" id="pFollow">
+  <section class="panel">
     <div class="ctl">
       <div class="top"><span>字号</span></div>
       <div class="seg" id="fsize">
@@ -195,39 +180,6 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
     </div>
   </section>
 
-  <!-- 模式二：画中画小窗浮在系统相机上（固定速度） -->
-  <section class="panel" id="pPip" hidden>
-    <div class="stage">
-      <canvas id="cv" width="960" height="540"></canvas>
-      <video id="vid" playsinline muted webkit-playsinline></video>
-      <span class="badge" id="badge">预览</span>
-    </div>
-    <div class="row">
-      <div class="ctl">
-        <div class="top"><span>滚动速度</span><b id="spdv">每秒 4 字</b></div>
-        <input type="range" id="spd" min="2" max="9" step="0.5" value="4">
-      </div>
-      <div class="ctl">
-        <div class="top"><span>字号</span></div>
-        <div class="seg" id="size">
-          <button type="button" data-v="56">小</button>
-          <button type="button" data-v="72" aria-pressed="true">中</button>
-          <button type="button" data-v="92">大</button>
-        </div>
-      </div>
-    </div>
-    <button class="go" id="go" type="button">准备提词</button>
-    <div class="bar" id="bar" hidden><i id="barI"></i></div>
-    <div class="status" id="st"></div>
-    <div class="steps">
-      <h2>怎么用（固定速度，可配系统相机拍 4K）</h2>
-      <ol>
-        <li>调好速度和字号，点“准备提词”，再点“开始悬浮”。</li>
-        <li>回到桌面打开相机，切到前置“视频”，小窗会浮在上面。</li>
-        <li>把小窗拖到屏幕最上方贴着镜头，双指捏可放大，点一下有暂停按钮。开头有 3 秒倒数。</li>
-      </ol>
-    </div>
-  </section>
 </div>
 
 <!-- 拍摄层 -->
@@ -266,10 +218,19 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
   <div class="toast" id="toast" hidden></div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.min.js"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
+
+  // Safari ignores user-scalable=no, so block pinch and double-tap zoom by hand
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(t => document.addEventListener(t, e => e.preventDefault(), { passive: false }));
+  document.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', e => {
+    const now = Date.now();
+    if (now - lastTouchEnd < 300 && !e.target.closest('textarea, input, video')) e.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
   const load = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
   const save = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
   const SAMPLE = '（示例台词，换成你自己的）\n大家好。\n今天想跟大家聊一聊，孩子做数学题总是粗心，到底是怎么回事。\n其实很多时候不是不会，而是没有把题目读完。\n我们家现在的办法很简单：先圈题，再做题。';
@@ -307,18 +268,6 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
       onPick(+b.dataset.v);
     }));
   }
-
-  // ---------- tabs ----------
-  function showTab(which) {
-    $('tabFollow').setAttribute('aria-selected', String(which === 'follow'));
-    $('tabPip').setAttribute('aria-selected', String(which === 'pip'));
-    $('pFollow').hidden = which !== 'follow';
-    $('pPip').hidden = which !== 'pip';
-    save('tici.tab', which);
-    window.dispatchEvent(new Event('tici-tab'));
-  }
-  $('tabFollow').onclick = () => showTab('follow');
-  $('tabPip').onclick = () => showTab('pip');
 
   /* =====================================================================
      模式一：边说边滚
@@ -714,214 +663,6 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
     const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name;
     document.body.appendChild(a); a.click(); a.remove();
   };
-
-  /* =====================================================================
-     模式二：悬浮小窗（画中画，固定速度）
-     ===================================================================== */
-  const W = 960, H = 540, FPS = 24, LEAD = 3, TAIL = 2, PAD_X = 48, TOP = 70;
-  const cv = $('cv'), ctx = cv.getContext('2d'), vid = $('vid');
-  const spd = $('spd'), go = $('go'), st = $('st');
-  let fontSize = +(load('tici.size') || 72), built = null, dirty = true, previewT = 0;
-  spd.value = load('tici.speed') || spd.value;
-  pickSeg('size', fontSize, v => { fontSize = v; markDirty(); });
-  const fam = () => getComputedStyle(document.body).fontFamily;
-
-  function wrapLines(text) {
-    ctx.font = `600 ${fontSize}px ${fam()}`;
-    const maxW = W - PAD_X * 2, out = [];
-    for (const para of text.replace(/\r/g, '').split('\n')) {
-      if (!para.trim()) { out.push(''); continue; }
-      let line = '';
-      for (const ch of para) {
-        if (ctx.measureText(line + ch).width > maxW && line) {
-          if (/[，。！？、；：,.!?;:”’）)]/.test(ch)) { line += ch; out.push(line); line = ''; continue; }
-          out.push(line); line = ch;
-        } else line += ch;
-      }
-      if (line) out.push(line);
-    }
-    return out;
-  }
-  function plan() {
-    const lines = wrapLines(ta.value.trim() || ' ');
-    const lh = Math.round(fontSize * 1.45);
-    const chars = [...ta.value.replace(/\s/g, '')].length || 1;
-    const cpl = chars / (lines.filter(Boolean).length || 1);
-    const pxPerSec = (+spd.value / cpl) * lh;
-    const total = LEAD + lines.length * lh / pxPerSec + TAIL;
-    return { lines, lh, pxPerSec, total, frames: Math.ceil(total * FPS) };
-  }
-  function draw(p, t, g = ctx) {
-    g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
-    g.font = `600 ${fontSize}px ${fam()}`; g.textBaseline = 'top';
-    const off = Math.max(0, t - LEAD) * p.pxPerSec, ry = TOP + p.lh * 0.5;
-    p.lines.forEach((ln, i) => {
-      const y = TOP + i * p.lh - off;
-      if (y < -p.lh || y > H) return;
-      const d = Math.abs(y + p.lh / 2 - ry) / H;
-      g.fillStyle = `rgba(255,255,255,${Math.max(0.35, 1 - d * 1.4).toFixed(3)})`;
-      g.fillText(ln, PAD_X, y);
-    });
-    g.fillStyle = '#ff5a3c';
-    g.beginPath(); g.moveTo(14, ry - 12); g.lineTo(30, ry); g.lineTo(14, ry + 12); g.fill();
-    if (t < LEAD) {
-      g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(0, 0, W, H);
-      g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.font = `700 220px ${fam()}`; g.fillText(String(Math.ceil(LEAD - t)), W / 2, H / 2);
-      g.textAlign = 'left';
-    }
-  }
-
-  let building = false, last = performance.now();
-  function tick(now) {
-    if (!building && !$('pPip').hidden) {
-      const p = plan();
-      previewT = (previewT + (now - last) / 1000) % p.total;
-      draw(p, previewT);
-      $('dur').textContent = `约 ${Math.round(p.total)} 秒`;
-    }
-    last = now;
-    requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-  window.addEventListener('tici-tab', () => { if ($('pPip').hidden) $('dur').textContent = ''; });
-
-  function markDirty() {
-    dirty = true; built = null;
-    if (!inPiP()) setBtn('准备提词', false);
-    save('tici.speed', spd.value); save('tici.size', String(fontSize));
-    $('spdv').textContent = `每秒 ${spd.value} 字`;
-  }
-  $('spdv').textContent = `每秒 ${spd.value} 字`;
-  ta.addEventListener('input', markDirty);
-  spd.addEventListener('input', () => { previewT = 0; markDirty(); });
-
-  function setBtn(text, stop) { go.textContent = text; go.classList.toggle('stop', !!stop); go.disabled = false; }
-  function say(msg, cls) { st.textContent = msg; st.className = 'status' + (cls ? ' ' + cls : ''); }
-  function progress(f) { $('bar').hidden = f == null; $('barI').style.width = ((f || 0) * 100).toFixed(1) + '%'; }
-
-  async function buildWebCodecs(p) {
-    const muxer = new Mp4Muxer.Muxer({ target: new Mp4Muxer.ArrayBufferTarget(), video: { codec: 'avc', width: W, height: H }, fastStart: 'in-memory' });
-    // draw on a detached canvas: reading frames back from the on-screen one is slow
-    const eCanvas = document.createElement('canvas'); eCanvas.width = W; eCanvas.height = H;
-    const ec = eCanvas.getContext('2d');
-    let err = null, outN = 0, wake = null;
-    const enc = new VideoEncoder({
-      output: (c, m) => { try { muxer.addVideoChunk(c, m); } catch (e) { err = e; } outN++; if (outN % 10 === 0) progress(outN / p.frames); },
-      error: e => { err = e; if (wake) wake(); },
-    });
-    const cfg = { codec: 'avc1.42001f', width: W, height: H, bitrate: 1_200_000, framerate: FPS };
-    const sup = await VideoEncoder.isConfigSupported(cfg);
-    if (!sup.supported) throw new Error('不支持 H.264 编码');
-    enc.configure(cfg);
-    enc.addEventListener('dequeue', () => { if (wake) { const w = wake; wake = null; w(); } });
-    for (let i = 0; i < p.frames; i++) {
-      if (err) throw err;
-      draw(p, i / FPS, ec);
-      const fr = new VideoFrame(eCanvas, { timestamp: Math.round(i * 1e6 / FPS), duration: Math.round(1e6 / FPS) });
-      enc.encode(fr, { keyFrame: i % (FPS * 2) === 0 });
-      fr.close();
-      // keep the queue short so memory stays low; some encoders hold a batch of frames before emitting, so never block for long
-      for (let n = 0; enc.encodeQueueSize > 12 && !err && n < 20; n++) await new Promise(r => { wake = r; setTimeout(r, 50); });
-      if (i % 8 === 0) await new Promise(r => setTimeout(r, 0));
-    }
-    await enc.flush(); enc.close();
-    if (err) throw err;
-    muxer.finalize();
-    return new Blob([muxer.target.buffer], { type: 'video/mp4' });
-  }
-  async function buildRecorder(p) {
-    const type = ['video/mp4', 'video/webm'].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
-    if (!type || !cv.captureStream) throw new Error('这个浏览器做不了视频');
-    const s = cv.captureStream(FPS), r = new MediaRecorder(s, { mimeType: type }), parts = [];
-    r.ondataavailable = e => e.data.size && parts.push(e.data);
-    const done = new Promise(res => r.onstop = res);
-    r.start(500);
-    const t0 = performance.now();
-    await new Promise(res => {
-      const step = () => {
-        const t = (performance.now() - t0) / 1000;
-        draw(p, Math.min(t, p.total)); progress(t / p.total);
-        if (t >= p.total) return res();
-        requestAnimationFrame(step);
-      };
-      step();
-    });
-    r.stop(); await done;
-    return new Blob(parts, { type });
-  }
-  async function build() {
-    building = true; go.disabled = true; go.textContent = '正在准备…'; say(''); progress(0);
-    const p = plan();
-    try {
-      let blob;
-      if (window.VideoEncoder && window.VideoFrame && window.Mp4Muxer) blob = await buildWebCodecs(p);
-      else { say(`要等约 ${Math.round(p.total)} 秒（实时生成）`); blob = await buildRecorder(p); }
-      if (vid.src) URL.revokeObjectURL(vid.src);
-      vid.src = URL.createObjectURL(blob);
-      vid.load();
-      await new Promise((res, rej) => { vid.onloadedmetadata = res; vid.onerror = () => rej(new Error('视频打不开')); });
-      built = p; dirty = false;
-      setBtn('开始悬浮'); say('准备好了，点“开始悬浮”', 'ok');
-    } catch (e) {
-      setBtn('准备提词'); say('没做成：' + (e.message || e) + '。请用 iPhone 自带的 Safari 打开再试。', 'err');
-    } finally { building = false; progress(null); }
-  }
-  function canPiP() {
-    return (document.pictureInPictureEnabled && vid.requestPictureInPicture) ||
-           (vid.webkitSupportsPresentationMode && vid.webkitSupportsPresentationMode('picture-in-picture'));
-  }
-  function inPiP() { return document.pictureInPictureElement === vid || vid.webkitPresentationMode === 'picture-in-picture'; }
-  function startPiP() {
-    ambient();
-    vid.currentTime = 0;
-    const play = vid.play();
-    if (vid.requestPictureInPicture && document.pictureInPictureEnabled) {
-      vid.requestPictureInPicture().catch(e => {
-        if (vid.webkitSetPresentationMode) vid.webkitSetPresentationMode('picture-in-picture');
-        else say('打不开小窗：' + e.message, 'err');
-      });
-    } else if (vid.webkitSetPresentationMode) vid.webkitSetPresentationMode('picture-in-picture');
-    if (play && play.catch) play.catch(() => {});
-  }
-  function stopPiP() {
-    vid.pause();
-    if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
-    else if (vid.webkitSetPresentationMode) vid.webkitSetPresentationMode('inline');
-  }
-  const onPiP = () => {
-    if (inPiP()) { setBtn('停止悬浮', true); $('badge').textContent = '悬浮中'; say('现在去打开相机吧', 'ok'); }
-    else { setBtn(dirty ? '准备提词' : '开始悬浮'); $('badge').textContent = '预览'; }
-  };
-  vid.addEventListener('enterpictureinpicture', onPiP);
-  vid.addEventListener('leavepictureinpicture', onPiP);
-  vid.addEventListener('webkitpresentationmodechanged', onPiP);
-
-  // Opening the Camera app interrupts other playback. Ask Safari to treat this as
-  // ambient (mixes with others), and if it still gets paused right after we leave
-  // the page, keep trying to resume for a few seconds.
-  function ambient() { try { if (navigator.audioSession) navigator.audioSession.type = 'ambient'; } catch (e) {} }
-  let resumeUntil = 0, resumeTimer = 0;
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && inPiP() && !vid.paused) resumeUntil = Date.now() + 8000;
-  });
-  vid.addEventListener('pause', () => {
-    if (!inPiP() || Date.now() > resumeUntil || vid.ended) return;
-    clearInterval(resumeTimer);
-    resumeTimer = setInterval(() => {
-      if (!vid.paused || Date.now() > resumeUntil || !inPiP()) return clearInterval(resumeTimer);
-      ambient();
-      const p = vid.play(); if (p && p.catch) p.catch(() => {});
-    }, 400);
-  });
-  go.addEventListener('click', () => {
-    if (inPiP()) return stopPiP();
-    if (!built || dirty) return build();
-    if (!canPiP()) return say('这里不能开小窗。请用 iPhone 自带的 Safari 打开这个网页。', 'err');
-    startPiP();
-  });
-
-  showTab(load('tici.tab') === 'pip' ? 'pip' : 'follow');
 
   // test hook for the alignment logic (no answers here, safe to expose)
   window.__tici = { align: t => { align(normStr(t)); return pos; }, setScript: s => { ta.value = s; buildPrompter(); }, get pos() { return pos; }, set pos(v) { pos = v; } };

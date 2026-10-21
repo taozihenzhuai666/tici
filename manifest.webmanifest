@@ -1,0 +1,16 @@
+{
+  "name": "悬浮提词器",
+  "short_name": "提词器",
+  "description": "边说边滚的手机提词器：说到哪，台词滚到哪。",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0d0f14",
+  "theme_color": "#0d0f14",
+  "icons": [
+    { "src": "tici-icon-v1-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "tici-icon-v1-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "tici-icon-v1-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
