@@ -122,6 +122,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
 .timer.on { background: var(--accent); }
 .res { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(112px + env(safe-area-inset-bottom, 0px)); font: 600 13px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 8px; }
 .res:empty { display: none; }
+.mic { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(112px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 6px; font-size: 12px; color: #fff; background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 8px; }
+.mic b { display: block; width: 70px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.25); overflow: hidden; }
+.mic i { display: block; height: 100%; width: 0; background: var(--ok); }
 
 .done {
   position: absolute; inset: auto 0 0 0; z-index: 2;
@@ -219,6 +222,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
   <div class="heard" id="heard"><i></i><span id="heardT">点红色按钮开始</span></div>
   <div class="timer" id="timer">00:00</div>
   <div class="res" id="res"></div>
+  <div class="mic" id="mic" hidden><span>声音</span><b><i id="micI"></i></b></div>
   <div class="sbar">
     <div class="l">
       <button class="chip" id="closeShoot" type="button">关闭</button>
@@ -368,6 +372,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
 
   // ---------- speech recognition (Apple, built in) ----------
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let audioStarted = null;
   function startListen() {
     if (!SR) { toast('这个浏览器听不了声音，已切到匀速'); setFollow(false); return; }
     if (listening) return;
@@ -395,6 +400,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
       if (listening) { try { recog.start(); } catch (e) { setTimeout(() => listening && recog && recog.start(), 300); } }
       else setHeard(follow ? '没在听' : '匀速滚动中', false);
     };
+    recog.onaudiostart = () => { if (audioStarted) audioStarted(); };
     listening = true;
     try { recog.start(); setHeard('在听…', true); } catch (e) { listening = false; }
   }
@@ -504,11 +510,56 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
     const list = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
     return list.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
   }
-  function startRec() {
-    if (!stream) return;
+  // ---------- mic level meter: shows whether the recording is actually getting sound ----------
+  let actx = null, meterRaf = 0, meterPeak = 0, silentWarned = false;
+  function meter(track) {
+    cancelAnimationFrame(meterRaf); meterPeak = 0; silentWarned = false;
+    $('mic').hidden = !track;
+    if (!track || !actx) return;
+    let an;
+    try {
+      const src = actx.createMediaStreamSource(new MediaStream([track]));
+      an = actx.createAnalyser(); an.fftSize = 512; src.connect(an);
+    } catch (e) { return; }
+    const buf = new Float32Array(an.fftSize);
+    const loop = () => {
+      an.getFloatTimeDomainData(buf);
+      let sum = 0; for (const v of buf) sum += v * v;
+      const lvl = Math.min(1, Math.sqrt(sum / buf.length) * 6);
+      meterPeak = Math.max(meterPeak, lvl);
+      $('micI').style.width = (lvl * 100).toFixed(0) + '%';
+      if (!silentWarned && rec && rec.state === 'recording' && Date.now() - recStart > 4000 && meterPeak < 0.02) {
+        silentWarned = true;
+        toast(follow ? '录像收不到声音：麦克风可能被“跟声音”占走了。点左下角切到“匀速”再录试试' : '录像收不到声音，请检查麦克风权限', 5000);
+      }
+      meterRaf = requestAnimationFrame(loop);
+    };
+    loop();
+  }
+
+  let starting = false, recAudio = null;
+  async function startRec() {
+    if (!stream || starting) return;
+    starting = true;
+    // must be created inside the tap
+    try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {}
+    // Start the recogniser first, then take a fresh mic track, so the recording
+    // and the recogniser share the audio session instead of fighting over it.
+    if (follow) {
+      startListen();
+      await new Promise(r => { audioStarted = r; setTimeout(r, 1500); });
+      audioStarted = null;
+    }
+    let aTrack = null;
+    try { aTrack = (await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })).getAudioTracks()[0]; } catch (e) {}
+    recAudio = aTrack;
+    if (!aTrack) aTrack = stream.getAudioTracks().find(t => t.readyState === 'live') || null;
+    const recStream = new MediaStream([stream.getVideoTracks()[0]].concat(aTrack ? [aTrack] : []));
+    starting = false;
     const type = pickType();
-    try { rec = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: 12_000_000 } : undefined); }
+    try { rec = new MediaRecorder(recStream, type ? { mimeType: type, videoBitsPerSecond: 12_000_000, audioBitsPerSecond: 128_000 } : undefined); }
     catch (e) { toast('这个浏览器录不了像'); return; }
+    if (!aTrack) toast('没拿到麦克风，录出来的视频会没有声音', 3500);
     chunks = [];
     rec.ondataavailable = e => e.data && e.data.size && chunks.push(e.data);
     rec.onstop = onRecStop;
@@ -520,7 +571,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
       const s = Math.floor((Date.now() - recStart) / 1000);
       $('timer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
     }, 500);
-    if (follow) startListen(); else startEven();
+    meter(aTrack);
+    if (!follow) startEven();
   }
   let discard = false;
   function stopRec(drop) {
@@ -529,6 +581,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
     $('recBtn').classList.remove('on'); $('recBtn').setAttribute('aria-label', '开始录像');
     $('timer').classList.remove('on');
     if (rec && rec.state !== 'inactive') rec.stop();
+    cancelAnimationFrame(meterRaf); $('mic').hidden = true;
+    if (recAudio) { const t = recAudio; recAudio = null; setTimeout(() => t.stop(), 500); }
   }
   function onRecStop() {
     if (discard) { chunks = []; return; }
