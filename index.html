@@ -79,7 +79,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 
 /* ---------- shooting layer ---------- */
 #shoot { position: fixed; inset: 0; z-index: 10; background: #000; overflow: hidden; touch-action: manipulation; }
-#cam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+#cam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; transform: scaleX(-1); }
 .prompter {
   position: absolute; left: 0; right: 0; top: 0;
   height: calc(env(safe-area-inset-top, 0px) + var(--ph, 34vh));
@@ -470,14 +470,15 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 
   // Safari often hands out 640×480 unless asked again; ask for the biggest it will give,
   // in the shape the phone is held (wide when landscape, tall when portrait)
+  let maxFps = 0;
   async function bestRes(warn) {
     const vt = stream && stream.getVideoTracks()[0];
     if (!vt) return;
     const px = () => { const s = vt.getSettings(); return (s.width || 0) * (s.height || 0); };
     const fps = () => vt.getSettings().frameRate || 0;
     // default: 1080p at 60 fps
-    const wide = { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } };
-    const tall = { width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 60 } };
+    const wide = { width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 16 / 9 }, frameRate: { ideal: 60 } };
+    const tall = { width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9 / 16 }, frameRate: { ideal: 60 } };
     for (const c of (isLand() ? [wide, tall] : [tall, wide]).concat([{ width: { min: 1280 }, height: { min: 720 }, frameRate: { ideal: 60 } }])) {
       if (px() >= 1920 * 1080 && fps() >= 59) break;
       const before = px();
@@ -489,17 +490,24 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
       const cur = vt.getSettings();
       try { await vt.applyConstraints({ facingMode: 'user', width: { ideal: cur.width }, height: { ideal: cur.height }, frameRate: { min: 50, ideal: 60 } }); } catch (e) {}
     }
+    // widest view the camera allows (1x on most phones; lower if it can go wider)
+    const caps = vt.getCapabilities ? vt.getCapabilities() : {};
+    if (caps.zoom && typeof caps.zoom.min === 'number') {
+      try { await vt.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] }); } catch (e) {}
+    }
+    maxFps = caps.frameRate && caps.frameRate.max ? Math.round(caps.frameRate.max) : 0;
     showRes();
     const st = vt.getSettings(), short = Math.min(st.width || 0, st.height || 0);
     if (warn && short && short < 720) toast(`摄像头只给了 ${st.width}×${st.height}，画面会糊`, 3500);
-    else if (warn && st.frameRate && st.frameRate < 50) toast(`摄像头只给了 ${Math.round(st.frameRate)} 帧，开不了 60 帧`, 3500);
+    else if (warn && st.frameRate && st.frameRate < 50) toast(`Safari 只给网页 ${Math.round(st.frameRate)} 帧${maxFps ? `（最高 ${maxFps} 帧）` : ''}，开不了 60 帧`, 3500);
   }
   function showRes() {
     const vt = stream && stream.getVideoTracks()[0];
     if (!vt) return;
     const st = vt.getSettings(), short = Math.min(st.width || 0, st.height || 0);
     const f = Math.round(st.frameRate || 0);
-    $('res').textContent = short ? `${short}p${f ? f : ''} · ${isLand() ? '横屏' : '竖屏'}` : '';
+    const cap = maxFps && f < 50 ? `（最高 ${maxFps} 帧）` : '';
+    $('res').textContent = short ? `${st.width}×${st.height} · ${f ? f + ' 帧' : ''}${cap} · ${isLand() ? '横屏' : '竖屏'}` : '';
   }
 
   // turning the phone: re-lay the prompter; between takes also re-ask for full resolution
