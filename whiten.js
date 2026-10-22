@@ -6,7 +6,7 @@
 // 用法：Whiten.start(video, canvas); Whiten.setLevel(0..3); Whiten.setSlim(true); Whiten.loadFace(); Whiten.stop()
 (function () {
   const LEVELS = { 1: .2, 2: .35, 3: .5 };
-  const SLIM = .045;   // "a little": cheeks move in about 4–5%
+  const SLIM = .06;    // "a little": cheeks move in about 6%
   const here = p => new URL(p, document.baseURI).href;
   let gl = null, cv = null, video = null, prog = null, uK = null, uFace = null, uSlim = null, tex = null;
   let running = false, level = 2, slimOn = false, vfcId = 0, rafId = 0;

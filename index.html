@@ -621,6 +621,12 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (rec && rec.state === 'recording') return toast('录像中不能换美白，先停止再换');
     fxLevel = (fxLevel + 1) % 4; save('tici.white', String(fxLevel)); applyFx();
   };
+  // show on the button whether a face is being found, so "nothing happens" can be told apart from "no face"
+  setInterval(() => {
+    if ($('shoot').hidden || !slimOn || !window.Whiten || !Whiten.isRunning()) return;
+    const f = Whiten.debug().face;
+    $('slimBtn').textContent = f ? '瘦脸 开' : '瘦脸 没找到脸';
+  }, 1000);
   $('slimBtn').onclick = () => {
     if (rec && rec.state === 'recording') return toast('录像中不能开关瘦脸，先停止再换');
     slimOn = !slimOn; save('tici.slim', slimOn ? '1' : '0'); applyFx();
