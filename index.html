@@ -79,7 +79,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 
 /* ---------- shooting layer ---------- */
 #shoot { position: fixed; inset: 0; z-index: 10; background: #000; overflow: hidden; touch-action: manipulation; }
-#cam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; transform: scaleX(-1); }
+#cam, #fx { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; transform: scaleX(-1); }
 .prompter {
   position: absolute; left: 0; right: 0; top: 0;
   height: calc(env(safe-area-inset-top, 0px) + var(--ph, 34vh));
@@ -117,11 +117,11 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 .recbtn:disabled { opacity: .6; }
 .recbtn.on i { width: 28px; height: 28px; border-radius: 6px; }
 @media (prefers-reduced-motion: no-preference) { .recbtn i { transition: all .2s; } }
-.timer { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(186px + env(safe-area-inset-bottom, 0px)); font: 600 15px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 10px; border-radius: 8px; font-variant-numeric: tabular-nums; }
+.timer { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(var(--sbarH, 170px) + 10px); font: 600 15px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 10px; border-radius: 8px; font-variant-numeric: tabular-nums; }
 .timer.on { background: var(--accent); }
-.res { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(186px + env(safe-area-inset-bottom, 0px)); font: 600 13px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 8px; }
+.res { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(var(--sbarH, 170px) + 10px); font: 600 13px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 8px; }
 .res:empty { display: none; }
-.mic { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(186px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 6px; font-size: 12px; color: #fff; background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 8px; }
+.mic { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(var(--sbarH, 170px) + 10px); display: flex; align-items: center; gap: 6px; font-size: 12px; color: #fff; background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 8px; }
 .mic b { display: block; width: 70px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.25); overflow: hidden; }
 .mic i { display: block; height: 100%; width: 0; background: var(--ok); }
 
@@ -207,6 +207,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
         <li>点红色按钮开始录像，正常说话就行。说到哪，台词就滚到哪；停下来它也停。</li>
         <li>念错、跳过一两句也没关系，它会找回你在读的位置。点台词里的任何一个字，也能直接跳过去。</li>
         <li>听不清的时候，可以点左下角切到“匀速”。</li>
+        <li>右下角“美白”可以换 关 / 轻 / 中 / 强，只让皮肤白一点，别的不变。</li>
         <li>录完点“保存视频”，在弹出的菜单里选“存储视频”就进了相册。</li>
       </ol>
     </div>
@@ -217,6 +218,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 <!-- 拍摄层 -->
 <div id="shoot" hidden>
   <video id="cam" playsinline muted autoplay webkit-playsinline></video>
+  <canvas id="fx" hidden></canvas>
   <div class="prompter" id="prompter">
     <div class="readline" id="readline"></div>
     <div class="ptext" id="ptext"></div>
@@ -232,6 +234,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
       <button class="chip" id="spdBtn" type="button" hidden>每秒 4 字</button>
     </div>
     <div class="r">
+      <button class="chip" id="fxBtn" type="button">美白 中</button>
       <button class="chip" id="smaller" type="button" aria-label="字小一点">A-</button>
       <button class="chip" id="bigger" type="button" aria-label="字大一点">A+</button>
     </div>
@@ -250,9 +253,12 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   <div class="toast" id="toast" hidden></div>
 </div>
 
+<script src="whiten.js"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
+  const syncBar = () => $('shoot').style.setProperty('--sbarH', document.querySelector('.sbar').offsetHeight + 'px');
+  try { new ResizeObserver(syncBar).observe(document.querySelector('.sbar')); } catch (e) {}
 
   // Safari ignores user-scalable=no, so block pinch and double-tap zoom by hand
   ['gesturestart', 'gesturechange', 'gestureend'].forEach(t => document.addEventListener(t, e => e.preventDefault(), { passive: false }));
@@ -448,7 +454,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   function setFollow(on) {
     follow = on;
     $('modeBtn').textContent = on ? '跟声音' : '匀速';
-    $('spdBtn').hidden = on;
+    $('spdBtn').hidden = on; syncBar();
     clearInterval(evenTimer);
     if (!on && rec && rec.state === 'recording') startEven();
     if (on && rec && rec.state === 'recording') startListen();
@@ -578,11 +584,31 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     lastLand = isLand();
     setFollow(true);
     setHeard('点红色按钮开始', false);
+    applyFx(); syncBar();
     try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
   }
   $('openCam').onclick = openCam;
 
+  // ---------- skin whitening ----------
+  const FX_NAMES = ['关', '轻', '中', '强'];
+  let fxLevel = load('tici.white') == null ? 2 : Math.max(0, Math.min(3, +load('tici.white')));
+  let fxTrack = null;
+  const fxOn = () => fxLevel > 0 && window.Whiten && Whiten.isRunning();
+  function applyFx() {
+    $('fxBtn').textContent = `美白 ${FX_NAMES[fxLevel]}`;
+    if (!window.Whiten) return;
+    if (!fxLevel) { Whiten.stop(); $('fx').hidden = true; return; }
+    try { Whiten.setLevel(fxLevel); Whiten.start($('cam'), $('fx')); $('fx').hidden = false; }
+    catch (e) { fxLevel = 0; $('fxBtn').textContent = '美白 关'; toast('这台手机开不了美白：' + e.message, 4000); }
+  }
+  $('fxBtn').onclick = () => {
+    if (rec && rec.state === 'recording') return toast('录像中不能换美白，先停止再换');
+    fxLevel = (fxLevel + 1) % 4; save('tici.white', String(fxLevel)); applyFx();
+  };
+
   function closeShoot() {
+    if (window.Whiten) Whiten.stop();
+    $('fx').hidden = true;
     stopRec(true);
     stopListen(); clearInterval(evenTimer);
     if (stream) stream.getTracks().forEach(t => t.stop());
@@ -653,7 +679,10 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     try { aTrack =(await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })).getAudioTracks()[0]; } catch (e) {}
     recAudio = aTrack;
     if (!aTrack) aTrack = stream.getAudioTracks().find(t => t.readyState === 'live') || null;
-    const recStream = new MediaStream([stream.getVideoTracks()[0]].concat(aTrack ? [aTrack] : []));
+    // with whitening on, record the processed picture instead of the raw camera
+    let vTrack = stream.getVideoTracks()[0];
+    if (fxOn() && $('fx').captureStream) { fxTrack = $('fx').captureStream(fpsPick).getVideoTracks()[0]; vTrack = fxTrack; }
+    const recStream = new MediaStream([vTrack].concat(aTrack ? [aTrack] : []));
     starting = false; $('recBtn').disabled = false;
     setHeard(follow ? '在听…说吧' : '匀速滚动中', follow);
     const type = pickType();
@@ -683,6 +712,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (rec && rec.state !== 'inactive') rec.stop();
     cancelAnimationFrame(meterRaf); $('mic').hidden = true;
     if (recAudio) { const t = recAudio; recAudio = null; setTimeout(() => t.stop(), 500); }
+    if (fxTrack) { const t = fxTrack; fxTrack = null; setTimeout(() => t.stop(), 500); }
   }
   function onRecStop() {
     if (discard) { chunks = []; return; }
