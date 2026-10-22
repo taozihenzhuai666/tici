@@ -190,6 +190,13 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
         <button type="button" data-v="38">大</button>
       </div>
     </div>
+    <div class="ctl">
+      <div class="top"><span>帧数</span></div>
+      <div class="seg" id="fpsSeg">
+        <button type="button" data-v="30">30 帧</button>
+        <button type="button" data-v="60" aria-pressed="true">60 帧（更顺滑）</button>
+      </div>
+    </div>
     <button class="go" id="openCam" type="button">打开前置摄像头</button>
     <div class="status" id="fst"></div>
     <div class="steps">
@@ -304,6 +311,8 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 
   let fsize = +(load('tici.fsize') || 30);
   pickSeg('fsize', fsize, v => { fsize = v; save('tici.fsize', String(v)); });
+  let fpsPick = +(load('tici.fps') || 60) === 30 ? 30 : 60;
+  pickSeg('fpsSeg', fpsPick, v => { fpsPick = v; save('tici.fps', String(v)); });
 
   let stream = null, rec = null, chunks = [], recStart = 0, timerId = 0;
   let norm = [], normSpans = [], pos = 0, shownPos = -1;
@@ -468,29 +477,30 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   const landQ = matchMedia('(orientation: landscape)');
   const isLand = () => landQ.matches;
 
-  // Safari often hands out 640×480 unless asked again; ask for the biggest it will give,
-  // in the shape the phone is held (wide when landscape, tall when portrait)
+  // Safari often hands out 640×480 unless asked again; ask for the biggest it will give.
+  // Always ask in the camera's own (landscape) terms: Safari turns the picture to match how the
+  // phone is held, so asking for a tall picture in portrait would turn it twice and come out sideways.
   let maxFps = 0;
   async function bestRes(warn) {
     const vt = stream && stream.getVideoTracks()[0];
     if (!vt) return;
+    const want = fpsPick;
     const px = () => { const s = vt.getSettings(); return (s.width || 0) * (s.height || 0); };
     const fps = () => vt.getSettings().frameRate || 0;
-    // default: 1080p at 60 fps
-    const wide = { width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 16 / 9 }, frameRate: { ideal: 60 } };
-    const tall = { width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9 / 16 }, frameRate: { ideal: 60 } };
-    for (const c of (isLand() ? [wide, tall] : [tall, wide]).concat([{ width: { min: 1280 }, height: { min: 720 }, frameRate: { ideal: 60 } }])) {
-      if (px() >= 1920 * 1080 && fps() >= 59) break;
+    const hd = { width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 16 / 9 }, frameRate: { ideal: want } };
+    for (const c of [hd, { width: { min: 1280 }, height: { min: 720 }, frameRate: { ideal: want } }]) {
+      if (px() >= 1920 * 1080 && Math.abs(fps() - want) < 2) break;
       const before = px();
       try { await vt.applyConstraints(Object.assign({ facingMode: 'user' }, c)); } catch (e) {}
-      if (px() < before) { try { await vt.applyConstraints(wide); } catch (e) {} }
+      if (px() < before) { try { await vt.applyConstraints(hd); } catch (e) {} }
     }
-    // size is right but still 30 fps: push for 60 at this size
-    if (fps() < 59) {
+    // size is right but frame rate isn't what was picked: ask again at this size
+    if (Math.abs(fps() - want) >= 2) {
       const cur = vt.getSettings();
-      try { await vt.applyConstraints({ facingMode: 'user', width: { ideal: cur.width }, height: { ideal: cur.height }, frameRate: { min: 50, ideal: 60 } }); } catch (e) {}
+      const fr = want === 60 ? { min: 50, ideal: 60 } : { ideal: 30, max: 30 };
+      try { await vt.applyConstraints({ facingMode: 'user', width: { ideal: cur.width }, height: { ideal: cur.height }, frameRate: fr }); } catch (e) {}
     }
-    // widest view the camera allows (1x on most phones; lower if it can go wider)
+    // widest view the camera allows
     const caps = vt.getCapabilities ? vt.getCapabilities() : {};
     if (caps.zoom && typeof caps.zoom.min === 'number') {
       try { await vt.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] }); } catch (e) {}
@@ -499,7 +509,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     showRes();
     const st = vt.getSettings(), short = Math.min(st.width || 0, st.height || 0);
     if (warn && short && short < 720) toast(`摄像头只给了 ${st.width}×${st.height}，画面会糊`, 3500);
-    else if (warn && st.frameRate && st.frameRate < 50) toast(`Safari 只给网页 ${Math.round(st.frameRate)} 帧${maxFps ? `（最高 ${maxFps} 帧）` : ''}，开不了 60 帧`, 3500);
+    else if (warn && want === 60 && st.frameRate && st.frameRate < 50) toast(`Safari 只给网页 ${Math.round(st.frameRate)} 帧${maxFps ? `（最高 ${maxFps} 帧）` : ''}，开不了 60 帧`, 3500);
   }
   function showRes() {
     const vt = stream && stream.getVideoTracks()[0];
@@ -507,7 +517,9 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     const st = vt.getSettings(), short = Math.min(st.width || 0, st.height || 0);
     const f = Math.round(st.frameRate || 0);
     const cap = maxFps && f < 50 ? `（最高 ${maxFps} 帧）` : '';
-    $('res').textContent = short ? `${st.width}×${st.height} · ${f ? f + ' 帧' : ''}${cap} · ${isLand() ? '横屏' : '竖屏'}` : '';
+    // Safari may report the size in the camera's own terms, so the shape comes from how the phone is held
+    const shape = isLand() ? '横屏' : '竖屏';
+    $('res').textContent = short ? `${st.width}×${st.height} · ${f ? f + ' 帧' : ''}${cap} · ${shape}` : '';
   }
 
   // turning the phone: re-lay the prompter; between takes also re-ask for full resolution
@@ -534,7 +546,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch (e) {}
     // try the nicest settings first, then simpler ones; some phones refuse a combination
     const tries = [
-      { video: { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } }, audio: true },
+      { video: { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: fpsPick } }, audio: true },
       { video: { facingMode: 'user' }, audio: true },
       { video: true, audio: true },
       { video: { facingMode: 'user' }, audio: false },
