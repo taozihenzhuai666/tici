@@ -139,6 +139,30 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 .done video { width: 100%; max-height: 42vh; border-radius: 12px; background: #000; }
 .done .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .done a { color: var(--muted); font-size: 14px; text-align: center; }
+/* landscape: prompter across the top, controls in a column on the right */
+@media (orientation: landscape) {
+  #shoot { --ph: 42vh; }
+  .prompter { right: calc(116px + env(safe-area-inset-right, 0px)); padding-top: calc(env(safe-area-inset-top, 0px) + 6px); }
+  .heard { left: calc(50% - 58px); }
+  .sbar {
+    left: auto; top: 0; bottom: 0; right: 0; width: calc(116px + env(safe-area-inset-right, 0px));
+    padding: max(10px, env(safe-area-inset-top, 0px)) env(safe-area-inset-right, 0px) max(10px, env(safe-area-inset-bottom, 0px)) 0;
+    flex-direction: column; flex-wrap: nowrap; justify-content: center; gap: 10px;
+    background: linear-gradient(90deg, rgba(0,0,0,0), rgba(0,0,0,.6));
+  }
+  .sbar .l, .sbar .r { flex-direction: column; gap: 8px; }
+  .sbar .l { order: -1; } .sbar .r { order: 1; }
+  .sbar .recbtn { order: 0; margin: 2px 0; }
+  .chip { min-width: 96px; }
+  .timer, .res, .mic { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .timer { right: calc(128px + env(safe-area-inset-right, 0px)); }
+  .mic { left: calc(50% - 58px); }
+  .done { display: grid; grid-template-columns: minmax(0, 1fr) 240px; align-content: start; column-gap: 14px; row-gap: 10px; }
+  .done .grab { grid-column: 1 / -1; }
+  .done video { grid-column: 1; grid-row: 2 / span 3; max-height: 60vh; }
+  .done .btns { grid-column: 2; grid-template-columns: 1fr; }
+  .done #doneBack, .done a { grid-column: 2; }
+}
 .toast { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,.75); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 15px; max-width: 80%; text-align: center; }
 </style>
 </head>
@@ -172,6 +196,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
       <h2>怎么用</h2>
       <ol>
         <li>台词显示在屏幕最上面，贴着前置镜头，看字就像在看镜头。</li>
+        <li>竖着拿就录竖屏，横过来就录横屏（先在控制中心关掉“竖排方向锁定”）。转好方向再点录像，录的中途别转。</li>
         <li>点红色按钮开始录像，正常说话就行。说到哪，台词就滚到哪；停下来它也停。</li>
         <li>念错、跳过一两句也没关系，它会找回你在读的位置。点台词里的任何一个字，也能直接跳过去。</li>
         <li>听不清的时候，可以点左下角切到“匀速”。</li>
@@ -440,6 +465,49 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   $('bigger').onclick = () => resize(3);
 
   // ---------- camera ----------
+  const landQ = matchMedia('(orientation: landscape)');
+  const isLand = () => landQ.matches;
+
+  // Safari often hands out 640×480 unless asked again; ask for the biggest it will give,
+  // in the shape the phone is held (wide when landscape, tall when portrait)
+  async function bestRes(warn) {
+    const vt = stream && stream.getVideoTracks()[0];
+    if (!vt) return;
+    const px = () => { const s = vt.getSettings(); return (s.width || 0) * (s.height || 0); };
+    const wide = { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } };
+    const tall = { width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } };
+    for (const c of (isLand() ? [wide, tall] : [tall, wide]).concat([{ width: { min: 1280 }, height: { min: 720 } }])) {
+      if (px() >= 1920 * 1080) break;
+      const before = px();
+      try { await vt.applyConstraints(Object.assign({ facingMode: 'user' }, c)); } catch (e) {}
+      if (px() < before) { try { await vt.applyConstraints(wide); } catch (e) {} }
+    }
+    showRes();
+    const st = vt.getSettings(), short = Math.min(st.width || 0, st.height || 0);
+    if (warn && short && short < 720) toast(`摄像头只给了 ${st.width}×${st.height}，画面会糊`, 3500);
+  }
+  function showRes() {
+    const vt = stream && stream.getVideoTracks()[0];
+    if (!vt) return;
+    const st = vt.getSettings(), short = Math.min(st.width || 0, st.height || 0);
+    $('res').textContent = short ? `${short}p · ${isLand() ? '横屏' : '竖屏'}` : '';
+  }
+
+  // turning the phone: re-lay the prompter; between takes also re-ask for full resolution
+  let lastLand = isLand();
+  function onRotate() {
+    if ($('shoot').hidden) return;
+    const land = isLand();
+    if (land !== lastLand) {
+      lastLand = land;
+      if (rec && rec.state === 'recording') toast('录像中转了手机，画面方向会乱。要换横竖，请先停止录像，转好再录', 4500);
+      else setTimeout(() => bestRes(false), 400);
+    }
+    setTimeout(() => { shownPos = -1; render(true); showRes(); }, 350);
+  }
+  landQ.addEventListener ? landQ.addEventListener('change', onRotate) : landQ.addListener(onRotate);
+  window.addEventListener('resize', onRotate);
+
   async function openCam() {
     $('fst').textContent = ''; $('fst').className = 'status';
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -472,28 +540,13 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
       $('fst').textContent = `没打开摄像头（${n || '未知'}${lastErr && lastErr.message ? '：' + lastErr.message : ''}）。${why}`;
       $('fst').className = 'status err'; return;
     }
-    // Safari often hands out 640×480 unless asked again after opening; ask for the biggest it will give
-    const vt = stream.getVideoTracks()[0];
-    const px = () => { const s = vt.getSettings(); return (s.width || 0) * (s.height || 0); };
-    for (const c of [
-      { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
-      { width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } },
-      { width: { min: 1280 }, height: { min: 720 } },
-    ]) {
-      if (px() >= 1920 * 1080) break;
-      const before = px();
-      try { await vt.applyConstraints(Object.assign({ facingMode: 'user' }, c)); } catch (e) {}
-      if (px() < before) { try { await vt.applyConstraints({ width: { ideal: 1920 }, height: { ideal: 1080 } }); } catch (e) {} }
-    }
-    const s = vt.getSettings();
-    const short = Math.min(s.width || 0, s.height || 0);
-    $('res').textContent = short ? `${short}p` : '';
-    if (short && short < 720) toast(`摄像头只给了 ${s.width}×${s.height}，画面会糊`, 3500);
+    await bestRes(true);
     if (!stream.getAudioTracks().length) toast('没拿到麦克风，录出来的视频会没有声音', 3500);
     $('cam').srcObject = stream;
     $('shoot').hidden = false; $('done').hidden = true;
     document.body.style.overflow = 'hidden';
     buildPrompter();
+    lastLand = isLand();
     setFollow(true);
     setHeard('点红色按钮开始', false);
     try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
