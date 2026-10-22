@@ -1,16 +1,60 @@
-// 美白：只给脸变白，别的地方一点不动，清晰度、对比度不降。
-// 找脸不用模型：每隔几帧在一张很小的画面上按肤色找出最像脸的一块，只在这块椭圆里、而且是皮肤颜色的地方提亮。
-// 提亮用的是中间调曲线：暗部、轮廓不变，所以不会发灰。
-// 用法：Whiten.start(video, canvas); Whiten.setLevel(1..3); Whiten.stop()
+// 美白 + 瘦脸，只动脸，别的地方（墙、衣服、背景）一点不动，清晰度、对比度不降。
+// 找脸：有 MediaPipe 人脸检测就用它（文件在本站 mp/，打开瘦脸时才加载）；
+//       加载不了时用保底办法——在一张很小的画面上按肤色找出最像脸的一块。
+// 美白：只在脸的椭圆里、而且是皮肤颜色的地方提亮中间调（暗部、轮廓不变，不发灰）。
+// 瘦脸：两颊、下巴往里收一点点。
+// 用法：Whiten.start(video, canvas); Whiten.setLevel(0..3); Whiten.setSlim(true); Whiten.loadFace(); Whiten.stop()
 (function () {
   const LEVELS = { 1: .2, 2: .35, 3: .5 };
-  let gl = null, cv = null, video = null, prog = null, uK = null, tex = null;
-  let running = false, level = 2, vfcId = 0, rafId = 0;
-  let uFace = null, face = null, frameN = 0;
+  const SLIM = .045;   // "a little": cheeks move in about 4–5%
+  const here = p => new URL(p, document.baseURI).href;
+  let gl = null, cv = null, video = null, prog = null, uK = null, uFace = null, uSlim = null, tex = null;
+  let running = false, level = 2, slimOn = false, vfcId = 0, rafId = 0;
+  let fd = null, faceLoading = null, face = null, frameN = 0, lastTs = 0;
   const gCv = document.createElement('canvas'), gCtx = gCv.getContext('2d', { willReadFrequently: true });
 
-  // the biggest skin-coloured blob that isn't a whole wall: that's the face
-  function findFace() {
+  function loadFace() {
+    if (faceLoading) return faceLoading;
+    faceLoading = (async () => {
+      const mp = await import(here('mp/vision_bundle.mjs'));
+      const files = await mp.FilesetResolver.forVisionTasks(here('mp/wasm'));
+      let err;
+      for (const delegate of ['GPU', 'CPU']) {
+        try {
+          fd = await mp.FaceDetector.createFromOptions(files, {
+            baseOptions: { modelAssetPath: here('mp/blaze_face_short_range.tflite'), delegate },
+            runningMode: 'VIDEO', minDetectionConfidence: .5,
+          });
+          return;
+        } catch (e) { err = e; }
+      }
+      throw err;
+    })();
+    faceLoading.catch(() => { faceLoading = null; });
+    return faceLoading;
+  }
+
+  function glide(nf) { face = face ? face.map((v, i) => v + (nf[i] - v) * .4) : nf; }
+  function fade() { if (face) { face[2] *= .85; face[3] *= .85; if (face[2] < .02) face = null; } }
+
+  // with the model: the video goes in as is
+  function findFaceModel() {
+    const W = video.videoWidth, H = video.videoHeight;
+    lastTs = Math.max(lastTs + 1, Math.round(performance.now()));
+    try {
+      const d = fd.detectForVideo(video, lastTs).detections || [];
+      let best = null;
+      for (const x of d) if (!best || x.boundingBox.width > best.boundingBox.width) best = x;
+      if (!best) return fade();
+      const bb = best.boundingBox;
+      // the model's box stops at the eyebrows: stretch it up over the forehead
+      const hh = bb.height / 2 / H;
+      glide([(bb.originX + bb.width / 2) / W, (bb.originY + bb.height / 2) / H - hh * .25, bb.width / 2 / W, hh * 1.25]);
+    } catch (e) {}
+  }
+
+  // without the model: the biggest solid skin-coloured blob that isn't a whole wall
+  function findFaceSkin() {
     const W = video.videoWidth, H = video.videoHeight;
     const gw = 48, gh = Math.max(16, Math.round(48 * H / W)), n = gw * gh;
     if (gCv.width !== gw || gCv.height !== gh) { gCv.width = gw; gCv.height = gh; }
@@ -38,27 +82,34 @@
         if (y < gh - 1 && m[i + gw] && !seen[i + gw]) { seen[i + gw] = 1; stack.push(i + gw); }
       }
       const edges = (x0 === 0) + (x1 === gw - 1) + (y0 === 0) + (y1 === gh - 1);
-      if (area < n * .01 || area > n * .45 || edges >= 3) continue;      // too small, or a wall
-      const fill = area / ((x1 - x0 + 1) * (y1 - y0 + 1));
-      if (fill < .35) continue;                                            // faces are solid, not stringy
+      if (area < n * .01 || area > n * .45 || edges >= 3) continue;        // too small, or a wall
+      if (area / ((x1 - x0 + 1) * (y1 - y0 + 1)) < .35) continue;            // faces are solid, not stringy
       const cx = (x0 + x1 + 1) / 2 / gw, cy = (y0 + y1 + 1) / 2 / gh;
       const score = area * (1.3 - Math.abs(cx - .5)) * (1.3 - Math.abs(cy - .45));   // prefer the middle
       if (score > bestScore) { bestScore = score; best = [cx, cy, (x1 - x0 + 1) / 2 / gw, (y1 - y0 + 1) / 2 / gh]; }
     }
-    if (best) face = face ? face.map((v, i) => v + (best[i] - v) * .35) : best;
-    else if (face) { face[2] *= .85; face[3] *= .85; if (face[2] < .02) face = null; }
+    if (best) glide(best); else fade();
   }
 
   const VS = `attribute vec2 p; varying vec2 uv;
 void main() { uv = vec2(p.x * .5 + .5, .5 - p.y * .5); gl_Position = vec4(p, 0., 1.); }`;
   const FS = `precision highp float;
-varying vec2 uv; uniform sampler2D vid; uniform float k;
-uniform vec4 face;   // centre x, y (origin top-left), half width, half height; z = 0 means no face found
+varying vec2 uv; uniform sampler2D vid; uniform float k, slim;
+uniform vec4 face;   // centre x, y (origin top-left), half width, half height; z = 0 means no face
 const vec3 LUM = vec3(.299, .587, .114);
+vec2 warp(vec2 p) {
+  if (face.z <= 0. || slim <= 0.) return p;
+  vec2 c = face.xy + vec2(0., face.w * .35);            // cheeks and jaw
+  vec2 d = (p - c) / vec2(face.z * 1.25, face.w * 1.1);
+  float w = 1. - smoothstep(.45, 1.25, length(d));
+  p.x += (p.x - c.x) * slim * w;                        // sample further out = cheeks move in
+  return p;
+}
 void main() {
-  vec3 c = texture2D(vid, uv).rgb;
+  vec2 q = warp(uv);
+  vec3 c = texture2D(vid, q).rgb;
   if (k > 0. && face.z > 0.) {
-    vec2 d = (uv - face.xy) / vec2(face.z * 1.15, face.w * 1.15);
+    vec2 d = (q - face.xy) / vec2(face.z * 1.15, face.w * 1.2);
     float inFace = 1. - smoothstep(.8, 1.1, length(d));
     float skin = smoothstep(.0, .15, c.r - c.b) * smoothstep(.06, .22, dot(c, LUM));
     float a = inFace * skin;
@@ -82,7 +133,8 @@ void main() {
     prog = gl.createProgram();
     gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
     gl.bindAttribLocation(prog, 0, 'p'); gl.linkProgram(prog); gl.useProgram(prog);
-    uK = gl.getUniformLocation(prog, 'k'); uFace = gl.getUniformLocation(prog, 'face');
+    uK = gl.getUniformLocation(prog, 'k');
+    uFace = gl.getUniformLocation(prog, 'face'); uSlim = gl.getUniformLocation(prog, 'slim');
     gl.uniform1i(gl.getUniformLocation(prog, 'vid'), 0);
     const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -101,8 +153,9 @@ void main() {
       if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
       gl.viewport(0, 0, W, H);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
-      if (frameN++ % 4 === 0) findFace();
-      gl.uniform1f(uK, LEVELS[level] || LEVELS[2]);
+      if ((level || slimOn) && frameN++ % 3 === 0) (fd ? findFaceModel : findFaceSkin)();
+      gl.uniform1f(uK, LEVELS[level] || 0);
+      gl.uniform1f(uSlim, slimOn ? SLIM : 0);
       const f = face || [0, 0, 0, 0];
       gl.uniform4f(uFace, f[0], f[1], f[2], f[3]);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -114,12 +167,15 @@ void main() {
   window.Whiten = {
     isRunning: () => running,
     setLevel(n) { level = n; },
+    setSlim(on) { slimOn = on; },
+    loadFace,
+    faceReady: () => !!fd,
+    debug: () => ({ face, slimOn, fd: !!fd }),
     start(v, canvas) {
       init(canvas); video = v;
       if (running) return;
       running = true; face = null; frame();
     },
-    debug: () => ({ face }),
     stop() {
       running = false;
       if (video && video.cancelVideoFrameCallback && vfcId) video.cancelVideoFrameCallback(vfcId);

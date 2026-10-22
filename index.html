@@ -153,7 +153,12 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   .sbar .l, .sbar .r { flex-direction: column; gap: 8px; }
   .sbar .l { order: -1; } .sbar .r { order: 1; }
   .sbar .recbtn { order: 0; margin: 2px 0; }
-  .chip { min-width: 96px; }
+  .chip { min-width: 96px; min-height: 44px; }
+  .sbar .r { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 112px; gap: 6px; }
+  .sbar .l { gap: 6px; }
+  .sbar { gap: 8px; }
+  .sbar .r #fxBtn, .sbar .r #slimBtn { min-width: 104px; }
+  .sbar .r #smaller, .sbar .r #bigger { min-width: 48px; }
   .timer, .res, .mic { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
   .timer { right: calc(128px + env(safe-area-inset-right, 0px)); }
   .mic { left: calc(50% - 58px); }
@@ -207,7 +212,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
         <li>点红色按钮开始录像，正常说话就行。说到哪，台词就滚到哪；停下来它也停。</li>
         <li>念错、跳过一两句也没关系，它会找回你在读的位置。点台词里的任何一个字，也能直接跳过去。</li>
         <li>听不清的时候，可以点左下角切到“匀速”。</li>
-        <li>右下角“美白”可以换 关 / 轻 / 中 / 强，只让脸白一点，别的地方和清晰度都不变。</li>
+        <li>右下角“美白”可以换 关 / 轻 / 中 / 强，只让脸白一点；“瘦脸”让脸瘦一点点。都只动脸，别的地方和清晰度不变。</li>
         <li>录完点“保存视频”，在弹出的菜单里选“存储视频”就进了相册。</li>
       </ol>
     </div>
@@ -235,6 +240,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     </div>
     <div class="r">
       <button class="chip" id="fxBtn" type="button">美白 中</button>
+      <button class="chip" id="slimBtn" type="button">瘦脸 开</button>
       <button class="chip" id="smaller" type="button" aria-label="字小一点">A-</button>
       <button class="chip" id="bigger" type="button" aria-label="字大一点">A+</button>
     </div>
@@ -532,6 +538,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   let lastLand = isLand();
   function onRotate() {
     if ($('shoot').hidden) return;
+    syncBar(); setTimeout(syncBar, 400); setTimeout(syncBar, 900);
     const land = isLand();
     if (land !== lastLand) {
       lastLand = land;
@@ -589,21 +596,34 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   }
   $('openCam').onclick = openCam;
 
-  // ---------- skin whitening ----------
+  // ---------- skin whitening + a little face slimming ----------
   const FX_NAMES = ['关', '轻', '中', '强'];
   let fxLevel = load('tici.white') == null ? 2 : Math.max(0, Math.min(3, +load('tici.white')));
+  let slimOn = load('tici.slim') !== '0';
   let fxTrack = null;
-  const fxOn = () => fxLevel > 0 && window.Whiten && Whiten.isRunning();
-  function applyFx() {
+  const fxOn = () => window.Whiten && Whiten.isRunning();
+  function fxLabels(slimText) {
     $('fxBtn').textContent = `美白 ${FX_NAMES[fxLevel]}`;
+    $('slimBtn').textContent = slimText || `瘦脸 ${slimOn ? '开' : '关'}`;
+  }
+  async function applyFx() {
+    fxLabels();
     if (!window.Whiten) return;
-    if (!fxLevel) { Whiten.stop(); $('fx').hidden = true; return; }
+    if (!fxLevel && !slimOn) { Whiten.stop(); $('fx').hidden = true; return; }
     try { Whiten.setLevel(fxLevel); Whiten.start($('cam'), $('fx')); $('fx').hidden = false; }
-    catch (e) { fxLevel = 0; $('fxBtn').textContent = '美白 关'; toast('这台手机开不了美白：' + e.message, 4000); }
+    catch (e) { fxLevel = 0; slimOn = false; fxLabels(); toast('这台手机开不了美白：' + e.message, 4000); return; }
+    // slimming works straight away (face found by skin colour); the face model loads quietly
+    // in the background and takes over when ready. If it can't load, slimming carries on without it.
+    Whiten.setSlim(slimOn);
+    if (slimOn && !Whiten.faceReady()) Whiten.loadFace().catch(e => { window.__faceErr = String(e && e.message || e); });
   }
   $('fxBtn').onclick = () => {
     if (rec && rec.state === 'recording') return toast('录像中不能换美白，先停止再换');
     fxLevel = (fxLevel + 1) % 4; save('tici.white', String(fxLevel)); applyFx();
+  };
+  $('slimBtn').onclick = () => {
+    if (rec && rec.state === 'recording') return toast('录像中不能开关瘦脸，先停止再换');
+    slimOn = !slimOn; save('tici.slim', slimOn ? '1' : '0'); applyFx();
   };
 
   function closeShoot() {
