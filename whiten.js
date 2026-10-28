@@ -8,8 +8,8 @@
   const LEVELS = { 1: .2, 2: .35, 3: .5 };
   const SLIM = .06;    // "a little": cheeks move in about 6%
   const here = p => new URL(p, document.baseURI).href;
-  let gl = null, cv = null, video = null, prog = null, uK = null, uFace = null, uSlim = null, tex = null;
-  let running = false, level = 2, slimOn = false, vfcId = 0, rafId = 0;
+  let gl = null, cv = null, video = null, prog = null, uK = null, uFace = null, uSlim = null, uSide = null, tex = null;
+  let running = false, level = 2, slimOn = false, sideways = false, vfcId = 0, rafId = 0;
   let fd = null, faceLoading = null, face = null, frameN = 0, lastTs = 0;
   const gCv = document.createElement('canvas'), gCtx = gCv.getContext('2d', { willReadFrequently: true });
 
@@ -94,16 +94,19 @@
   const VS = `attribute vec2 p; varying vec2 uv;
 void main() { uv = vec2(p.x * .5 + .5, .5 - p.y * .5); gl_Position = vec4(p, 0., 1.); }`;
   const FS = `precision highp float;
-varying vec2 uv; uniform sampler2D vid; uniform float k, slim;
+varying vec2 uv; uniform sampler2D vid; uniform float k, slim, side;   // side: the person lies across the picture (phone turned, picture not)
 uniform vec4 face;   // centre x, y (origin top-left), half width, half height; z = 0 means no face
 const vec3 LUM = vec3(.299, .587, .114);
 vec2 warp(vec2 p) {
   if (face.z <= 0. || slim <= 0.) return p;
-  vec2 c = face.xy + vec2(0., face.w * .35);            // cheeks and jaw
-  vec2 d = (p - c) / vec2(face.z * 1.25, face.w * 1.1);
+  // lying across the picture: work as if upright, and aim at the middle of the face (which end is the chin isn't known)
+  vec4 f = side > 0. ? face.yxwz : face;
+  if (side > 0.) p = p.yx;
+  vec2 c = f.xy + vec2(0., f.w * .35 * (1. - side));      // cheeks and jaw
+  vec2 d = (p - c) / vec2(f.z * 1.25, f.w * 1.1);
   float w = 1. - smoothstep(.45, 1.25, length(d));
   p.x += (p.x - c.x) * slim * w;                        // sample further out = cheeks move in
-  return p;
+  return side > 0. ? p.yx : p;
 }
 void main() {
   vec2 q = warp(uv);
@@ -134,7 +137,7 @@ void main() {
     gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
     gl.bindAttribLocation(prog, 0, 'p'); gl.linkProgram(prog); gl.useProgram(prog);
     uK = gl.getUniformLocation(prog, 'k');
-    uFace = gl.getUniformLocation(prog, 'face'); uSlim = gl.getUniformLocation(prog, 'slim');
+    uFace = gl.getUniformLocation(prog, 'face'); uSlim = gl.getUniformLocation(prog, 'slim'); uSide = gl.getUniformLocation(prog, 'side');
     gl.uniform1i(gl.getUniformLocation(prog, 'vid'), 0);
     const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -156,6 +159,7 @@ void main() {
       if ((level || slimOn) && frameN++ % 3 === 0) (fd ? findFaceModel : findFaceSkin)();
       gl.uniform1f(uK, LEVELS[level] || 0);
       gl.uniform1f(uSlim, slimOn ? SLIM : 0);
+      gl.uniform1f(uSide, sideways ? 1 : 0);
       const f = face || [0, 0, 0, 0];
       gl.uniform4f(uFace, f[0], f[1], f[2], f[3]);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -168,6 +172,7 @@ void main() {
     isRunning: () => running,
     setLevel(n) { level = n; },
     setSlim(on) { slimOn = on; },
+    setSideways(on) { sideways = on; },
     loadFace,
     faceReady: () => !!fd,
     debug: () => ({ face, slimOn, fd: !!fd }),

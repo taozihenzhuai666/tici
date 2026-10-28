@@ -78,12 +78,22 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 .steps ol { margin: 0; padding-left: 1.3em; }
 
 /* ---------- shooting layer ---------- */
+/* safe areas by where they really are: with the page locked upright and the phone turned, the UI layer is turned too */
+#shoot { --sat: env(safe-area-inset-top, 0px); --sar: env(safe-area-inset-right, 0px); --sab: env(safe-area-inset-bottom, 0px); --sal: env(safe-area-inset-left, 0px); }
+#shoot.turn-r { --sat: env(safe-area-inset-left, 0px); --sar: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-right, 0px); --sal: env(safe-area-inset-bottom, 0px); }
+#shoot.turn-l { --sat: env(safe-area-inset-right, 0px); --sar: env(safe-area-inset-bottom, 0px); --sab: env(safe-area-inset-left, 0px); --sal: env(safe-area-inset-top, 0px); }
+#ui { position: absolute; inset: 0; }
+#shoot.turned #ui { inset: auto; left: 50%; top: 50%; width: var(--uiW); height: var(--uiH); transform: translate(-50%, -50%) rotate(var(--uiRot)); }
+/* camera picture not turned by Safari (tall, person already upright in the hand): mirror across the other axis */
+#shoot.turned.flat #cam, #shoot.turned.flat #fx { transform: scaleY(-1); }
+/* camera picture turned level by Safari (wide): turn it with the UI */
+#shoot.turned.level #cam, #shoot.turned.level #fx { inset: auto; left: 50%; top: 50%; width: var(--uiW); height: var(--uiH); transform: translate(-50%, -50%) rotate(var(--uiRot)) scaleX(-1); }
 #shoot { position: fixed; inset: 0; z-index: 10; background: #000; overflow: hidden; touch-action: manipulation; }
 #cam, #fx { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; transform: scaleX(-1); }
 .prompter {
   position: absolute; left: 0; right: 0; top: 0;
-  height: calc(env(safe-area-inset-top, 0px) + var(--ph, 34vh));
-  padding: calc(env(safe-area-inset-top, 0px) + 8px) max(18px, env(safe-area-inset-right, 0px)) 0 max(18px, env(safe-area-inset-left, 0px));
+  height: calc(var(--sat) + var(--ph, 34vh));
+  padding: calc(var(--sat) + 8px) max(18px, var(--sar)) 0 max(18px, var(--sal));
   background: linear-gradient(rgba(0,0,0,.78) 78%, rgba(0,0,0,0));
   overflow: hidden;
 }
@@ -95,7 +105,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 
 .heard {
   position: absolute; left: 50%; transform: translateX(-50%);
-  top: calc(env(safe-area-inset-top, 0px) + var(--ph, 34vh) + 6px);
+  top: calc(var(--sat) + var(--ph, 34vh) + 6px);
   max-width: 90%; font-size: 13px; color: #fff; background: rgba(0,0,0,.5); padding: 4px 10px; border-radius: 99px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -104,7 +114,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 
 .sbar {
   position: absolute; left: 0; right: 0; bottom: 0;
-  padding: 14px max(16px, env(safe-area-inset-right, 0px)) calc(18px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  padding: 14px max(16px, var(--sar)) calc(18px + var(--sab)) max(16px, var(--sal));
   display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 8px;
   background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.6));
 }
@@ -117,9 +127,9 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 .recbtn:disabled { opacity: .6; }
 .recbtn.on i { width: 28px; height: 28px; border-radius: 6px; }
 @media (prefers-reduced-motion: no-preference) { .recbtn i { transition: all .2s; } }
-.timer { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(var(--sbarH, 170px) + 10px); font: 600 15px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 10px; border-radius: 8px; font-variant-numeric: tabular-nums; }
+.timer { position: absolute; right: max(16px, var(--sar)); bottom: calc(var(--sbarH, 170px) + 10px); font: 600 15px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 10px; border-radius: 8px; font-variant-numeric: tabular-nums; }
 .timer.on { background: var(--accent); }
-.res { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(var(--sbarH, 170px) + 10px); font: 600 13px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 8px; }
+.res { position: absolute; left: max(16px, var(--sal)); bottom: calc(var(--sbarH, 170px) + 10px); font: 600 13px var(--mono); color: #fff; background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 8px; }
 .res:empty { display: none; }
 .mic { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(var(--sbarH, 170px) + 10px); display: flex; align-items: center; gap: 6px; font-size: 12px; color: #fff; background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 8px; }
 .mic b { display: block; width: 70px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.25); overflow: hidden; }
@@ -127,47 +137,43 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 
 .done {
   position: absolute; inset: auto 0 0 0; z-index: 2;
-  padding: 18px max(16px, env(safe-area-inset-right, 0px)) calc(22px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  padding: 18px max(16px, var(--sar)) calc(22px + var(--sab)) max(16px, var(--sal));
   background: var(--panel); border-radius: 20px 20px 0 0; display: flex; flex-direction: column; gap: 12px;
 }
 .done { padding-top: 0; }
 .grab { touch-action: none; }
 @media (prefers-reduced-motion: no-preference) { .done.snap { transition: transform .25s ease-out; } }
-.done.collapsed { transform: translateY(calc(100% - 64px - env(safe-area-inset-bottom, 0px))); }
+.done.collapsed { transform: translateY(calc(100% - 64px - var(--sab))); }
 .grab { display: flex; flex-direction: column; align-items: center; gap: 6px; min-height: 48px; padding-top: 10px; margin: 0 -16px; cursor: grab; border: 0; background: transparent; color: var(--muted); font: 14px var(--font); width: calc(100% + 32px); }
 .grab::before { content: ""; width: 40px; height: 5px; border-radius: 3px; background: var(--line); }
 .done video { width: 100%; max-height: 42vh; border-radius: 12px; background: #000; }
 .done .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .done a { color: var(--muted); font-size: 14px; text-align: center; }
-/* landscape: prompter across the top, controls in a column on the right */
-@media (orientation: landscape) {
-  #shoot { --ph: 42vh; }
-  .prompter { right: calc(116px + env(safe-area-inset-right, 0px)); padding-top: calc(env(safe-area-inset-top, 0px) + 6px); }
-  .heard { left: calc(50% - 58px); }
-  .sbar {
-    left: auto; top: 0; bottom: 0; right: 0; width: calc(116px + env(safe-area-inset-right, 0px));
-    padding: max(10px, env(safe-area-inset-top, 0px)) env(safe-area-inset-right, 0px) max(10px, env(safe-area-inset-bottom, 0px)) 0;
-    flex-direction: column; flex-wrap: nowrap; justify-content: center; gap: 10px;
-    background: linear-gradient(90deg, rgba(0,0,0,0), rgba(0,0,0,.6));
-  }
-  .sbar .l, .sbar .r { flex-direction: column; gap: 8px; }
-  .sbar .l { order: -1; } .sbar .r { order: 1; }
-  .sbar .recbtn { order: 0; margin: 2px 0; }
-  .chip { min-width: 96px; min-height: 44px; }
-  .sbar .r { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 112px; gap: 6px; }
-  .sbar .l { gap: 6px; }
-  .sbar { gap: 8px; }
-  .sbar .r #fxBtn, .sbar .r #slimBtn { min-width: 104px; }
-  .sbar .r #smaller, .sbar .r #bigger { min-width: 48px; }
-  .timer, .res, .mic { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
-  .timer { right: calc(128px + env(safe-area-inset-right, 0px)); }
-  .mic { left: calc(50% - 58px); }
-  .done { display: grid; grid-template-columns: minmax(0, 1fr) 240px; align-content: start; column-gap: 14px; row-gap: 10px; }
-  .done .grab { grid-column: 1 / -1; }
-  .done video { grid-column: 1; grid-row: 2 / span 3; max-height: 60vh; }
-  .done .btns { grid-column: 2; grid-template-columns: 1fr; }
-  .done #doneBack, .done a { grid-column: 2; }
-}
+/* landscape (page turned, or phone turned with the page locked upright): prompter across the top, controls in a column on the right */
+#shoot.land { --ph: 42vh; }
+#shoot.land.turned { --ph: 42vw; }
+#shoot.land .prompter { right: calc(116px + var(--sar)); padding-top: calc(var(--sat) + 6px); }
+#shoot.land .heard { left: calc(50% - 58px); }
+#shoot.land .sbar { left: auto; top: 0; bottom: 0; right: 0; width: calc(116px + var(--sar)); padding: max(10px, var(--sat)) var(--sar) max(10px, var(--sab)) 0; flex-direction: column; flex-wrap: nowrap; justify-content: center; gap: 10px; background: linear-gradient(90deg, rgba(0,0,0,0), rgba(0,0,0,.6)); }
+#shoot.land .sbar .l, #shoot.land .sbar .r { flex-direction: column; gap: 8px; }
+#shoot.land .sbar .l { order: -1; }
+#shoot.land .sbar .r { order: 1; }
+#shoot.land .sbar .recbtn { order: 0; margin: 2px 0; }
+#shoot.land .chip { min-width: 96px; min-height: 44px; }
+#shoot.land .sbar .r { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 112px; gap: 6px; }
+#shoot.land .sbar .l { gap: 6px; }
+#shoot.land .sbar { gap: 8px; }
+#shoot.land .sbar .r #fxBtn, #shoot.land .sbar .r #slimBtn { min-width: 104px; }
+#shoot.land .sbar .r #smaller, #shoot.land .sbar .r #bigger { min-width: 48px; }
+#shoot.land .timer, #shoot.land .res, #shoot.land .mic { bottom: calc(12px + var(--sab)); }
+#shoot.land .timer { right: calc(128px + var(--sar)); }
+#shoot.land .mic { left: calc(50% - 58px); }
+#shoot.land .done { display: grid; grid-template-columns: minmax(0, 1fr) 240px; align-content: start; column-gap: 14px; row-gap: 10px; }
+#shoot.land .done .grab { grid-column: 1 / -1; }
+#shoot.land .done video { grid-column: 1; grid-row: 2 / span 3; max-height: 60vh; }
+#shoot.land .done .btns { grid-column: 2; grid-template-columns: 1fr; }
+#shoot.land .done #doneBack, #shoot.land .done a { grid-column: 2; }
+#shoot.land.turned .done video { max-height: 60vw; }
 .toast { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,.75); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 15px; max-width: 80%; text-align: center; }
 </style>
 </head>
@@ -208,7 +214,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
       <h2>怎么用</h2>
       <ol>
         <li>台词显示在屏幕最上面，贴着前置镜头，看字就像在看镜头。</li>
-        <li>竖着拿就录竖屏，横过来就录横屏（先在控制中心关掉“竖排方向锁定”）。转好方向再点录像，录的中途别转。</li>
+        <li>竖着拿就录竖屏，横过来就录横屏，开着“竖排方向锁定”也行。第一次会问能不能使用“动作与方向”，点允许，台词才会跟着手机转。转好方向再点录像，录的中途别转。</li>
         <li>点红色按钮开始录像，正常说话就行。说到哪，台词就滚到哪；停下来它也停。</li>
         <li>念错、跳过一两句也没关系，它会找回你在读的位置。点台词里的任何一个字，也能直接跳过去。</li>
         <li>听不清的时候，可以点左下角切到“匀速”。</li>
@@ -224,6 +230,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 <div id="shoot" hidden>
   <video id="cam" playsinline muted autoplay webkit-playsinline></video>
   <canvas id="fx" hidden></canvas>
+  <div id="ui">
   <div class="prompter" id="prompter">
     <div class="readline" id="readline"></div>
     <div class="ptext" id="ptext"></div>
@@ -257,6 +264,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     <a id="dl" href="#" hidden>保存不了？点这里打开视频，再长按保存</a>
   </div>
   <div class="toast" id="toast" hidden></div>
+  </div>
 </div>
 
 <script src="whiten.js"></script>
@@ -363,7 +371,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     const y = span.offsetTop;
     $('ptext').style.transform = `translateY(${readY() - y}px)`;
     const rl = $('readline');
-    rl.style.top = `calc(env(safe-area-inset-top, 0px) + 8px + ${readY() + fsize * 1.45 / 2 - 9}px)`;
+    rl.style.top = `calc(var(--sat) + 8px + ${readY() + fsize * 1.45 / 2 - 9}px)`;
   }
 
   // LCS length between two short arrays
@@ -489,6 +497,62 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   const landQ = matchMedia('(orientation: landscape)');
   const isLand = () => landQ.matches;
 
+  // ---------- phone turned while the page stays upright (竖排方向锁定 on) ----------
+  // The page doesn't turn, so the words run sideways and the take comes out tall with the person on their side.
+  // Read how the phone is really held from the motion sensor and turn the controls and the take to match.
+  // turn: 0 upright, 90 turned clockwise (top to the right), -90 turned anticlockwise
+  let held = 0, heldWant = 0, heldT = 0, turn = 0;
+  function onTilt(e) {
+    if (e.beta == null || e.gamma == null) return;
+    let h = held;
+    // phone on its side: gamma near ±90; past upright (screen facing down a little) beta jumps by 180 and gamma flips
+    if (Math.abs(e.gamma) > 55) h = (e.gamma > 0) === (Math.abs(e.beta) < 90) ? 90 : -90;
+    else if (e.beta > 55 && Math.abs(e.gamma) < 30) h = 0;
+    // only act once it has stayed put a moment, so the page's own turn (lock off) gets there first
+    if (h !== heldWant) { heldWant = h; heldT = Date.now(); }
+    if (heldWant !== held && Date.now() - heldT > 700) { held = heldWant; applyTurn(); }
+  }
+  function frameWide() { const v = $('cam'); return v.videoWidth > v.videoHeight; }
+  function applyTurn() {
+    const sh = $('shoot');
+    const t = isLand() ? 0 : held;
+    if (t !== turn && rec && rec.state === 'recording') toast('录像中转了手机，画面方向会乱。要换横竖，请先停止录像，转好再录', 4500);
+    turn = t;
+    if (window.Whiten) Whiten.setSideways(!!turn && !frameWide());
+    sh.classList.toggle('land', isLand() || !!turn);
+    sh.classList.toggle('turned', !!turn);
+    sh.classList.toggle('turn-r', turn === 90);
+    sh.classList.toggle('turn-l', turn === -90);
+    // Safari may or may not have turned the picture itself; tell by its shape
+    sh.classList.toggle('level', !!turn && frameWide());
+    sh.classList.toggle('flat', !!turn && !frameWide());
+    sh.style.setProperty('--uiW', innerHeight + 'px');
+    sh.style.setProperty('--uiH', innerWidth + 'px');
+    sh.style.setProperty('--uiRot', -turn + 'deg');
+    if (!sh.hidden) { syncBar(); shownPos = -1; render(true); showRes(); }
+  }
+  $('cam').addEventListener('resize', () => applyTurn());
+  // a tall picture of a turned phone: record it turned upright, so the take is wide like the phone
+  let turnCv = null, turnRun = false;
+  function turnedTrack(t) {
+    turnCv = document.createElement('canvas');
+    const x = turnCv.getContext('2d'), v = $('cam');
+    turnRun = true;
+    const step = () => {
+      if (!turnRun) return;
+      const src = fxOn() ? $('fx') : v;
+      const w = src.videoWidth || src.width, h = src.videoHeight || src.height;
+      if (w && h) {
+        if (turnCv.width !== h || turnCv.height !== w) { turnCv.width = h; turnCv.height = w; }
+        x.setTransform(1, 0, 0, 1, h / 2, w / 2); x.rotate(t * Math.PI / 180);
+        x.drawImage(src, -w / 2, -h / 2, w, h);
+      }
+      if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(step); else requestAnimationFrame(step);
+    };
+    step();
+    return turnCv.captureStream(fpsPick).getVideoTracks()[0];
+  }
+
   // Safari often hands out 640×480 unless asked again; ask for the biggest it will give.
   // Always ask in the camera's own (landscape) terms: Safari turns the picture to match how the
   // phone is held, so asking for a tall picture in portrait would turn it twice and come out sideways.
@@ -530,7 +594,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     const f = Math.round(st.frameRate || 0);
     const cap = maxFps && f < 50 ? `（最高 ${maxFps} 帧）` : '';
     // Safari may report the size in the camera's own terms, so the shape comes from how the phone is held
-    const shape = isLand() ? '横屏' : '竖屏';
+    const shape = isLand() || turn ? '横屏' : '竖屏';
     $('res').textContent = short ? `${st.width}×${st.height} · ${f ? f + ' 帧' : ''}${cap} · ${shape}` : '';
   }
 
@@ -545,7 +609,8 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
       if (rec && rec.state === 'recording') toast('录像中转了手机，画面方向会乱。要换横竖，请先停止录像，转好再录', 4500);
       else setTimeout(() => bestRes(false), 400);
     }
-    setTimeout(() => { shownPos = -1; render(true); showRes(); }, 350);
+    applyTurn();
+    setTimeout(() => { applyTurn(); shownPos = -1; render(true); showRes(); }, 350);
   }
   landQ.addEventListener ? landQ.addEventListener('change', onRotate) : landQ.addListener(onRotate);
   window.addEventListener('resize', onRotate);
@@ -555,6 +620,11 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       $('fst').textContent = '这个浏览器打不开摄像头，请用 iPhone 自带的 Safari 打开。'; $('fst').className = 'status err'; return;
     }
+    // motion sensor for telling how the phone is held; iOS asks once, and only from inside the tap
+    const DOE = window.DeviceOrientationEvent;
+    const listenTilt = () => { window.removeEventListener('deviceorientation', onTilt); window.addEventListener('deviceorientation', onTilt); };
+    if (DOE && typeof DOE.requestPermission === 'function') DOE.requestPermission().then(r => r === 'granted' && listenTilt()).catch(() => {});
+    else listenTilt();
     // the floating-window mode may have set a play-only session, which blocks the mic
     try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch (e) {}
     // try the nicest settings first, then simpler ones; some phones refuse a combination
@@ -588,7 +658,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     $('shoot').hidden = false; $('done').hidden = true;
     document.body.style.overflow = 'hidden';
     buildPrompter();
-    lastLand = isLand();
+    lastLand = isLand(); applyTurn();
     setFollow(true);
     setHeard('点红色按钮开始', false);
     applyFx(); syncBar();
@@ -614,7 +684,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     catch (e) { fxLevel = 0; slimOn = false; fxLabels(); toast('这台手机开不了美白：' + e.message, 4000); return; }
     // slimming works straight away (face found by skin colour); the face model loads quietly
     // in the background and takes over when ready. If it can't load, slimming carries on without it.
-    Whiten.setSlim(slimOn);
+    Whiten.setSlim(slimOn); Whiten.setSideways(!!turn && !frameWide());
     if (slimOn && !Whiten.faceReady()) Whiten.loadFace().catch(e => { window.__faceErr = String(e && e.message || e); });
   }
   $('fxBtn').onclick = () => {
@@ -707,7 +777,8 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (!aTrack) aTrack = stream.getAudioTracks().find(t => t.readyState === 'live') || null;
     // with whitening on, record the processed picture instead of the raw camera
     let vTrack = stream.getVideoTracks()[0];
-    if (fxOn() && $('fx').captureStream) { fxTrack = $('fx').captureStream(fpsPick).getVideoTracks()[0]; vTrack = fxTrack; }
+    if (turn && !frameWide() && HTMLCanvasElement.prototype.captureStream) { fxTrack = turnedTrack(turn); vTrack = fxTrack; }
+    else if (fxOn() && $('fx').captureStream) { fxTrack = $('fx').captureStream(fpsPick).getVideoTracks()[0]; vTrack = fxTrack; }
     const recStream = new MediaStream([vTrack].concat(aTrack ? [aTrack] : []));
     starting = false; $('recBtn').disabled = false;
     setHeard(follow ? '在听…说吧' : '匀速滚动中', follow);
@@ -738,7 +809,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (rec && rec.state !== 'inactive') rec.stop();
     cancelAnimationFrame(meterRaf); $('mic').hidden = true;
     if (recAudio) { const t = recAudio; recAudio = null; setTimeout(() => t.stop(), 500); }
-    if (fxTrack) { const t = fxTrack; fxTrack = null; setTimeout(() => t.stop(), 500); }
+    if (fxTrack) { const t = fxTrack; fxTrack = null; setTimeout(() => { t.stop(); turnRun = false; }, 500); }
   }
   function onRecStop() {
     if (discard) { chunks = []; return; }
@@ -761,15 +832,17 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (c) $('playback').pause();
   }
   let dragY = null, dragD = 0, base = 0;
+  // "down" on the sheet, which is turned along with the UI when the phone is turned with the page locked
+  const downY = e => turn === 90 ? e.clientX : turn === -90 ? -e.clientX : e.clientY;
   $('grab').addEventListener('pointerdown', e => {
-    dragY = e.clientY; dragD = 0;
+    dragY = downY(e); dragD = 0;
     base = collapsed ? sheet.offsetHeight - 64 : 0;
     sheet.classList.remove('snap');
     $('grab').setPointerCapture(e.pointerId);
   });
   $('grab').addEventListener('pointermove', e => {
     if (dragY == null) return;
-    dragD = e.clientY - dragY;
+    dragD = downY(e) - dragY;
     const y = Math.max(0, Math.min(sheet.offsetHeight - 64, base + dragD));
     sheet.classList.remove('collapsed');
     sheet.style.transform = `translateY(${y}px)`;
