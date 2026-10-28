@@ -173,11 +173,11 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 #shoot.land .done #doneBack, #shoot.land .done a { grid-column: 2; }
 #shoot.land.turned .done video { max-height: 60vw; }
 /* phone on its side but the take is tall: the picture is a strip beside the buttons, the script fills the left, next to the front lens */
-#shoot.land.tall .prompter { top: 0; bottom: 44px; height: auto; right: calc(116px + var(--sar) + var(--stripW)); padding: 10px 14px 0 max(16px, var(--sal)); background: none; }
-#shoot.land.tall .heard { top: auto; bottom: calc(10px + var(--sab)); left: calc((100% - 116px - var(--stripW)) / 2); }
+#shoot.land.tall .prompter { top: 0; bottom: 44px; height: auto; right: calc(116px + var(--sar) + var(--stripGap, 0px) + var(--stripW)); padding: 10px 14px 0 max(16px, var(--sal)); background: none; }
+#shoot.land.tall .heard { top: auto; bottom: calc(10px + var(--sab)); left: calc((100% - 116px - var(--stripGap, 0px) - var(--stripW)) / 2); }
 #shoot.land.tall .res { top: calc(6px + var(--sat, 0px)); bottom: auto; font-size: 11px; opacity: .85; }
-#shoot.land.tall .timer { bottom: auto; top: calc(10px + var(--sat)); right: calc(124px + var(--sar)); }
-#shoot.land.tall .mic { left: calc(100% - 116px - var(--stripW) / 2); }
+#shoot.land.tall .timer { bottom: auto; top: calc(10px + var(--sat)); right: calc(124px + var(--sar) + var(--stripGap, 0px)); }
+#shoot.land.tall .mic { left: calc(100% - 116px - var(--stripGap, 0px) - var(--stripW) / 2); }
 .toast { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,.75); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 15px; max-width: 80%; text-align: center; }
 </style>
 </head>
@@ -560,8 +560,11 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (tall) {
       const W = innerHeight, H = innerWidth, bar = 116;                    // the turned UI's size
       const stripW = Math.min(W - bar, H * Math.min(vw, vh) / Math.max(vw, vh));
+      // leave a gap before the buttons, so the picture sits nearer the middle
+      const gap = Math.round(Math.max(0, Math.min(60, (W - bar - stripW) * .1)));
       sh.style.setProperty('--stripW', stripW + 'px');
-      sh.style.setProperty('--camShift', (W - bar - stripW / 2 - W / 2) + 'px');
+      sh.style.setProperty('--stripGap', gap + 'px');
+      sh.style.setProperty('--camShift', (W - bar - gap - stripW / 2 - W / 2) + 'px');
     } else sh.style.setProperty('--camShift', '0px');
     if (!sh.hidden) { syncBar(); shownPos = -1; render(true); showRes(); }
   }
