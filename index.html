@@ -84,10 +84,8 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 #shoot.turn-l { --sat: env(safe-area-inset-right, 0px); --sar: env(safe-area-inset-bottom, 0px); --sab: env(safe-area-inset-left, 0px); --sal: env(safe-area-inset-top, 0px); }
 #ui { position: absolute; inset: 0; }
 #shoot.turned #ui { inset: auto; left: 50%; top: 50%; width: var(--uiW); height: var(--uiH); transform: translate(-50%, -50%) rotate(var(--uiRot)); }
-/* camera picture not turned by Safari (tall, person already upright in the hand): mirror across the other axis */
-#shoot.turned.flat #cam, #shoot.turned.flat #fx { transform: scaleY(-1); }
-/* camera picture turned level by Safari (wide): turn it with the UI */
-#shoot.turned.level #cam, #shoot.turned.level #fx { inset: auto; left: 50%; top: 50%; width: var(--uiW); height: var(--uiH); transform: translate(-50%, -50%) rotate(var(--uiRot)) scaleX(-1); }
+/* camera picture with the UI turned: turned by --camFix to stand the person up (Safari's picture can come any way round), then mirrored like a mirror, then turned with the UI */
+#shoot.turned #cam, #shoot.turned #fx { inset: auto; left: 50%; top: 50%; width: var(--camW); height: var(--camH); transform: translate(-50%, -50%) rotate(var(--uiRot)) scaleX(-1) rotate(var(--camFix)); }
 #shoot { position: fixed; inset: 0; z-index: 10; background: #000; overflow: hidden; touch-action: manipulation; }
 #cam, #fx { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; transform: scaleX(-1); }
 .prompter {
@@ -243,6 +241,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     <div class="l">
       <button class="chip" id="closeShoot" type="button" aria-label="返回">‹ 返回</button>
       <button class="chip" id="modeBtn" type="button">跟声音</button>
+      <button class="chip" id="fixBtn" type="button" hidden>画面转向</button>
       <button class="chip" id="spdBtn" type="button" hidden>每秒 4 字</button>
     </div>
     <div class="r">
@@ -512,39 +511,58 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (h !== heldWant) { heldWant = h; heldT = Date.now(); }
     if (heldWant !== held && Date.now() - heldT > 700) { held = heldWant; applyTurn(); }
   }
-  function frameWide() { const v = $('cam'); return v.videoWidth > v.videoHeight; }
-  function applyTurn() {
+  // How far the camera picture has to turn to stand the person up, for each way the phone is held.
+  // Safari's picture comes round differently on different phones and iOS versions, so the default is the
+  // picture as Safari shows it, and 画面转向 turns it a quarter at a time; the choice is kept.
+  let fix = 0;
+  const fixKey = () => `tici.fix.${turn}.${$('cam').videoWidth > $('cam').videoHeight ? 'w' : 't'}`;
+  function loadFix() {
+    if (!turn) return 0;
+    const v = load(fixKey());
+    return v == null ? ((-turn % 360) + 360) % 360 : +v;
+  }
+  $('fixBtn').onclick = () => {
+    if (rec && rec.state === 'recording') return toast('录像中不能转画面，先停止再转');
+    fix = (fix + 90) % 360; save(fixKey(), String(fix)); applyTurn(true);
+  };
+  function applyTurn(keepFix) {
     const sh = $('shoot');
     const t = isLand() ? 0 : held;
     if (t !== turn && rec && rec.state === 'recording') toast('录像中转了手机，画面方向会乱。要换横竖，请先停止录像，转好再录', 4500);
     turn = t;
-    if (window.Whiten) Whiten.setSideways(!!turn && !frameWide());
+    if (keepFix !== true) fix = loadFix();
+    const side = fix % 180 !== 0;
+    if (window.Whiten) Whiten.setSideways(side);
     sh.classList.toggle('land', isLand() || !!turn);
     sh.classList.toggle('turned', !!turn);
     sh.classList.toggle('turn-r', turn === 90);
     sh.classList.toggle('turn-l', turn === -90);
-    // Safari may or may not have turned the picture itself; tell by its shape
-    sh.classList.toggle('level', !!turn && frameWide());
-    sh.classList.toggle('flat', !!turn && !frameWide());
+    $('fixBtn').hidden = !turn;
     sh.style.setProperty('--uiW', innerHeight + 'px');
     sh.style.setProperty('--uiH', innerWidth + 'px');
     sh.style.setProperty('--uiRot', -turn + 'deg');
+    sh.style.setProperty('--camFix', fix + 'deg');
+    // the picture's own box, before --camFix turns it to fill the turned UI
+    sh.style.setProperty('--camW', (side ? innerWidth : innerHeight) + 'px');
+    sh.style.setProperty('--camH', (side ? innerHeight : innerWidth) + 'px');
     if (!sh.hidden) { syncBar(); shownPos = -1; render(true); showRes(); }
   }
   $('cam').addEventListener('resize', () => applyTurn());
-  // a tall picture of a turned phone: record it turned upright, so the take is wide like the phone
+  // record the picture turned the same way as on screen (not mirrored), so the take stands the way it was seen
   let turnCv = null, turnRun = false;
   function turnedTrack(t) {
     turnCv = document.createElement('canvas');
     const x = turnCv.getContext('2d'), v = $('cam');
+    const side = t % 180 !== 0;
     turnRun = true;
     const step = () => {
       if (!turnRun) return;
       const src = fxOn() ? $('fx') : v;
       const w = src.videoWidth || src.width, h = src.videoHeight || src.height;
       if (w && h) {
-        if (turnCv.width !== h || turnCv.height !== w) { turnCv.width = h; turnCv.height = w; }
-        x.setTransform(1, 0, 0, 1, h / 2, w / 2); x.rotate(t * Math.PI / 180);
+        const ow = side ? h : w, oh = side ? w : h;
+        if (turnCv.width !== ow || turnCv.height !== oh) { turnCv.width = ow; turnCv.height = oh; }
+        x.setTransform(1, 0, 0, 1, ow / 2, oh / 2); x.rotate(t * Math.PI / 180);
         x.drawImage(src, -w / 2, -h / 2, w, h);
       }
       if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(step); else requestAnimationFrame(step);
@@ -595,7 +613,9 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     const cap = maxFps && f < 50 ? `（最高 ${maxFps} 帧）` : '';
     // Safari may report the size in the camera's own terms, so the shape comes from how the phone is held
     const shape = isLand() || turn ? '横屏' : '竖屏';
-    $('res').textContent = short ? `${st.width}×${st.height} · ${f ? f + ' 帧' : ''}${cap} · ${shape}` : '';
+    // with the phone turned, also show the picture's real shape and the turn, for telling what Safari is doing
+    const v = $('cam'), dbg = turn ? ` · 画面${v.videoWidth}×${v.videoHeight} 手机${turn > 0 ? '右' : '左'}转 补${fix}°` : '';
+    $('res').textContent = short ? `${st.width}×${st.height} · ${f ? f + ' 帧' : ''}${cap} · ${shape}${dbg}` : '';
   }
 
   // turning the phone: re-lay the prompter; between takes also re-ask for full resolution
@@ -684,7 +704,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     catch (e) { fxLevel = 0; slimOn = false; fxLabels(); toast('这台手机开不了美白：' + e.message, 4000); return; }
     // slimming works straight away (face found by skin colour); the face model loads quietly
     // in the background and takes over when ready. If it can't load, slimming carries on without it.
-    Whiten.setSlim(slimOn); Whiten.setSideways(!!turn && !frameWide());
+    Whiten.setSlim(slimOn); Whiten.setSideways(fix % 180 !== 0);
     if (slimOn && !Whiten.faceReady()) Whiten.loadFace().catch(e => { window.__faceErr = String(e && e.message || e); });
   }
   $('fxBtn').onclick = () => {
@@ -777,7 +797,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (!aTrack) aTrack = stream.getAudioTracks().find(t => t.readyState === 'live') || null;
     // with whitening on, record the processed picture instead of the raw camera
     let vTrack = stream.getVideoTracks()[0];
-    if (turn && !frameWide() && HTMLCanvasElement.prototype.captureStream) { fxTrack = turnedTrack(turn); vTrack = fxTrack; }
+    if (turn && fix && HTMLCanvasElement.prototype.captureStream) { fxTrack = turnedTrack(fix); vTrack = fxTrack; }
     else if (fxOn() && $('fx').captureStream) { fxTrack = $('fx').captureStream(fpsPick).getVideoTracks()[0]; vTrack = fxTrack; }
     const recStream = new MediaStream([vTrack].concat(aTrack ? [aTrack] : []));
     starting = false; $('recBtn').disabled = false;
