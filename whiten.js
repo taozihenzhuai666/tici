@@ -1,80 +1,83 @@
 // 美白 + 瘦脸，只动脸，别的地方（墙、衣服、背景）一点不动，清晰度、对比度不降。
-// 找脸：有 MediaPipe 人脸检测就用它（文件在本站 mp/，打开瘦脸时才加载）；
-//       加载不了时用保底办法——在一张很小的画面上按肤色找出最像脸的一块。
+// 找脸：用 MediaPipe 人脸检测（文件在本站 mp/，开美白或瘦脸时加载，用 CPU——iPhone 上 GPU 会卡住不动）。
+//       模型能用时只信模型：没找到脸就什么都不改，不会去动墙、抱枕。
+//       模型实在加载不了，才用保底办法按肤色找脸，而且只做美白，不做瘦脸（找错了扭曲很难看）。
+// 手机横拿时人在画面里是躺着的：先把画面转正再找脸，结果再转回来；转哪个方向找到脸就一直用那个方向。
 // 美白：只在脸的椭圆里、而且是皮肤颜色的地方提亮中间调（暗部、轮廓不变，不发灰）。
-// 瘦脸：两颊、下巴往里收一点点。
-// 用法：Whiten.start(video, canvas); Whiten.setLevel(0..3); Whiten.setSlim(true); Whiten.loadFace(); Whiten.stop()
+// 瘦脸：两颊、下巴往里收一点点，按真正的下巴方向收。
+// 用法：Whiten.start(video, canvas); Whiten.setLevel(0..3); Whiten.setSlim(true); Whiten.setTurn(度数); Whiten.loadFace(); Whiten.stop()
 (function () {
   const LEVELS = { 1: .2, 2: .35, 3: .5 };
   const SLIM = .06;    // "a little": cheeks move in about 6%
+  const LOAD_LIMIT = 30000;
   const here = p => new URL(p, document.baseURI).href;
-  let gl = null, cv = null, video = null, prog = null, uK = null, uFace = null, uSlim = null, uSide = null, tex = null;
-  let running = false, level = 2, slimOn = false, sideways = false, turnDeg = 0, vfcId = 0, rafId = 0;
-  let fd = null, faceLoading = null, face = null, frameN = 0, lastTs = 0;
+  let gl = null, cv = null, video = null, prog = null, uK = null, uFace = null, uSlim = null, uChin = null, tex = null;
+  let running = false, level = 2, slimOn = false, turnDeg = 0, vfcId = 0, rafId = 0;
+  let fd = null, faceLoading = null, modelState = 'idle', face = null, faceBy = '', faceT = 0, frameN = 0, lastTs = 0;
   const gCv = document.createElement('canvas'), gCtx = gCv.getContext('2d', { willReadFrequently: true });
 
   function loadFace() {
+    if (fd) return Promise.resolve();
     if (faceLoading) return faceLoading;
-    faceLoading = (async () => {
+    modelState = 'loading';
+    const load = (async () => {
       const mp = await import(here('mp/vision_bundle.mjs'));
       const files = await mp.FilesetResolver.forVisionTasks(here('mp/wasm'));
-      let err;
-      for (const delegate of ['GPU', 'CPU']) {
-        try {
-          fd = await mp.FaceDetector.createFromOptions(files, {
-            baseOptions: { modelAssetPath: here('mp/blaze_face_short_range.tflite'), delegate },
-            runningMode: 'VIDEO', minDetectionConfidence: .5,
-          });
-          return;
-        } catch (e) { err = e; }
-      }
-      throw err;
+      fd = await mp.FaceDetector.createFromOptions(files, {
+        baseOptions: { modelAssetPath: here('mp/blaze_face_short_range.tflite'), delegate: 'CPU' },
+        runningMode: 'VIDEO', minDetectionConfidence: .5,
+      });
     })();
-    faceLoading.catch(() => { faceLoading = null; });
+    const limit = new Promise((_, no) => setTimeout(() => no(new Error('加载超时')), LOAD_LIMIT));
+    faceLoading = Promise.race([load, limit]).then(
+      () => { modelState = 'ready'; face = null; },
+      e => { faceLoading = null; if (!fd) modelState = 'failed'; throw e; });   // tried again next time the camera opens
     return faceLoading;
   }
 
-  function glide(nf) { face = face ? face.map((v, i) => v + (nf[i] - v) * .4) : nf; }
+  // t: how far the picture was turned to stand the face up (says which way the chin points)
+  function glide(nf, by, t) {
+    if (!face || faceBy !== by || faceT !== t) face = nf;
+    else face = face.map((v, i) => v + (nf[i] - v) * .4);
+    faceBy = by; faceT = t;
+  }
   function fade() { if (face) { face[2] *= .85; face[3] *= .85; if (face[2] < .02) face = null; } }
 
-  // with the model. It only knows upright faces, so when the person lies across the picture
-  // (phone held sideways) the picture is stood up first and the box turned back afterwards.
-  // Which way is up isn't certain (mirroring, how Safari hands the picture over), so when nothing is
-  // found the next quarter turn is tried; the turn that finds a face is kept.
+  // The model only knows upright faces. The picture is shrunk (quicker) and stood up first, and the box
+  // turned back afterwards. Which way is up isn't certain (mirroring, how Safari hands the picture over):
+  // the expected turn is tried first; once a turn has found a face it's kept unless the face is gone ~2 s.
   const rCv = document.createElement('canvas'), rCtx = rCv.getContext('2d');
-  let flip = 0, misses = 0, lastT = 0;
   const FLIPS = [0, 180, 90, 270];
+  let flip = 0, misses = 0, locked = false;
   function findFaceModel() {
     const W = video.videoWidth, H = video.videoHeight;
-    const t = lastT = ((turnDeg + FLIPS[flip]) % 360 + 360) % 360;
-    let src = video, sw = W, sh = H;
-    if (t) {
-      const s = Math.min(1, 640 / Math.max(W, H)), w = Math.round(W * s), h = Math.round(H * s);
-      const side = t % 180 !== 0;
-      sw = side ? h : w; sh = side ? w : h;
-      if (rCv.width !== sw || rCv.height !== sh) { rCv.width = sw; rCv.height = sh; }
-      rCtx.setTransform(1, 0, 0, 1, sw / 2, sh / 2); rCtx.rotate(t * Math.PI / 180);
-      rCtx.drawImage(video, -w / 2, -h / 2, w, h);
-      src = rCv;
-    }
+    const t = ((turnDeg + FLIPS[flip]) % 360 + 360) % 360;
+    const s = Math.min(1, 480 / Math.max(W, H)), w = Math.round(W * s), h = Math.round(H * s);
+    const side = t % 180 !== 0, sw = side ? h : w, sh = side ? w : h;
+    if (rCv.width !== sw || rCv.height !== sh) { rCv.width = sw; rCv.height = sh; }
+    rCtx.setTransform(1, 0, 0, 1, sw / 2, sh / 2); rCtx.rotate(t * Math.PI / 180);
+    rCtx.drawImage(video, -w / 2, -h / 2, w, h);
     lastTs = Math.max(lastTs + 1, Math.round(performance.now()));
-    try {
-      const d = fd.detectForVideo(src, lastTs).detections || [];
-      let best = null;
-      for (const x of d) if (!best || x.boundingBox.width > best.boundingBox.width) best = x;
-      if (!best) { if (++misses >= 2) { misses = 0; flip = (flip + 1) % 4; } return findFaceSkin(); }
-      misses = 0;
-      const bb = best.boundingBox;
-      // the model's box stops at the eyebrows: stretch it up over the forehead (upright terms)
-      const hh = bb.height / 2 / sh;
-      const a = (bb.originX + bb.width / 2) / sw, b = (bb.originY + bb.height / 2) / sh - hh * .25;
-      const hw = bb.width / 2 / sw, hv = hh * 1.25;
-      // back to the camera picture's own terms
-      if (t === 90) glide([b, 1 - a, hv, hw]);
-      else if (t === 180) glide([1 - a, 1 - b, hw, hv]);
-      else if (t === 270) glide([1 - b, a, hv, hw]);
-      else glide([a, b, hw, hv]);
-    } catch (e) { findFaceSkin(); }
+    let d;
+    try { d = fd.detectForVideo(rCv, lastTs).detections || []; } catch (e) { return fade(); }
+    let best = null;
+    for (const x of d) if (!best || x.boundingBox.width > best.boundingBox.width) best = x;
+    if (!best) {
+      fade();
+      if (++misses >= (locked ? 20 : 3)) { misses = 0; locked = false; flip = (flip + 1) % 4; }
+      return;
+    }
+    misses = 0; locked = true;
+    const bb = best.boundingBox;
+    // the model's box stops at the eyebrows: stretch it up over the forehead (upright terms)
+    const hh = bb.height / 2 / sh;
+    const a = (bb.originX + bb.width / 2) / sw, b = (bb.originY + bb.height / 2) / sh - hh * .25;
+    const hw = bb.width / 2 / sw, hv = hh * 1.25;
+    // back to the camera picture's own terms
+    if (t === 90) glide([b, 1 - a, hv, hw], 'model', t);
+    else if (t === 180) glide([1 - a, 1 - b, hw, hv], 'model', t);
+    else if (t === 270) glide([1 - b, a, hv, hw], 'model', t);
+    else glide([a, b, hw, hv], 'model', t);
   }
 
   // without the model: the biggest solid skin-coloured blob that isn't a whole wall
@@ -112,25 +115,25 @@
       const score = area * (1.3 - Math.abs(cx - .5)) * (1.3 - Math.abs(cy - .45));   // prefer the middle
       if (score > bestScore) { bestScore = score; best = [cx, cy, (x1 - x0 + 1) / 2 / gw, (y1 - y0 + 1) / 2 / gh]; }
     }
-    if (best) glide(best); else fade();
+    if (best) glide(best, 'skin', turnDeg); else fade();
   }
 
   const VS = `attribute vec2 p; varying vec2 uv;
 void main() { uv = vec2(p.x * .5 + .5, .5 - p.y * .5); gl_Position = vec4(p, 0., 1.); }`;
   const FS = `precision highp float;
-varying vec2 uv; uniform sampler2D vid; uniform float k, slim, side;   // side: the person lies across the picture (phone turned, picture not)
+varying vec2 uv; uniform sampler2D vid; uniform float k, slim;
 uniform vec4 face;   // centre x, y (origin top-left), half width, half height; z = 0 means no face
+uniform vec2 chin;   // which way the chin points in the picture: (0,1) upright, (1,0) / (-1,0) lying, (0,-1) upside down
 const vec3 LUM = vec3(.299, .587, .114);
 vec2 warp(vec2 p) {
   if (face.z <= 0. || slim <= 0.) return p;
-  // lying across the picture: work as if upright, and aim at the middle of the face (which end is the chin isn't known)
-  vec4 f = side > 0. ? face.yxwz : face;
-  if (side > 0.) p = p.yx;
-  vec2 c = f.xy + vec2(0., f.w * .35 * (1. - side));      // cheeks and jaw
-  vec2 d = (p - c) / vec2(f.z * 1.25, f.w * 1.1);
-  float w = 1. - smoothstep(.45, 1.25, length(d));
-  p.x += (p.x - c.x) * slim * w;                        // sample further out = cheeks move in
-  return side > 0. ? p.yx : p;
+  vec2 across = vec2(abs(chin.y), abs(chin.x));          // cheek to cheek
+  float hl = dot(abs(chin), face.zw), hw = dot(across, face.zw);   // half length, half width of the face
+  vec2 c = face.xy + chin * hl * .35;                    // cheeks and jaw
+  vec2 r = p - c;
+  float u = dot(r, across), v = dot(r, chin);
+  float w = 1. - smoothstep(.45, 1.25, length(vec2(u / (hw * 1.25), v / (hl * 1.1))));
+  return p + across * u * slim * w;                     // sample further out = cheeks move in
 }
 void main() {
   vec2 q = warp(uv);
@@ -161,7 +164,7 @@ void main() {
     gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
     gl.bindAttribLocation(prog, 0, 'p'); gl.linkProgram(prog); gl.useProgram(prog);
     uK = gl.getUniformLocation(prog, 'k');
-    uFace = gl.getUniformLocation(prog, 'face'); uSlim = gl.getUniformLocation(prog, 'slim'); uSide = gl.getUniformLocation(prog, 'side');
+    uFace = gl.getUniformLocation(prog, 'face'); uSlim = gl.getUniformLocation(prog, 'slim'); uChin = gl.getUniformLocation(prog, 'chin');
     gl.uniform1i(gl.getUniformLocation(prog, 'vid'), 0);
     const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -173,6 +176,7 @@ void main() {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
+  const CHIN = { 0: [0, 1], 90: [1, 0], 180: [0, -1], 270: [-1, 0] };
   function frame() {
     if (!running) return;
     const W = video.videoWidth, H = video.videoHeight;
@@ -180,11 +184,15 @@ void main() {
       if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
       gl.viewport(0, 0, W, H);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
-      if ((level || slimOn) && frameN++ % 3 === 0) (fd ? findFaceModel : findFaceSkin)();
+      if (frameN++ % 3 === 0) {
+        if (fd) findFaceModel();
+        else if (modelState === 'failed' && level) findFaceSkin();   // last resort, whitening only
+        else face = null;                                           // model still loading: leave the picture alone
+      }
+      const f = face || [0, 0, 0, 0], ch = CHIN[faceT] || CHIN[0];
       gl.uniform1f(uK, LEVELS[level] || 0);
-      gl.uniform1f(uSlim, slimOn ? SLIM : 0);
-      gl.uniform1f(uSide, sideways ? 1 : 0);
-      const f = face || [0, 0, 0, 0];
+      gl.uniform1f(uSlim, slimOn && faceBy === 'model' ? SLIM : 0);
+      gl.uniform2f(uChin, ch[0], ch[1]);
       gl.uniform4f(uFace, f[0], f[1], f[2], f[3]);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
@@ -196,11 +204,14 @@ void main() {
     isRunning: () => running,
     setLevel(n) { level = n; },
     setSlim(on) { slimOn = on; },
-    setSideways(on) { sideways = on; },
-    setTurn(deg) { turnDeg = ((deg % 360) + 360) % 360; sideways = turnDeg % 180 !== 0; flip = 0; misses = 0; },
+    setTurn(deg) {
+      deg = ((deg % 360) + 360) % 360;
+      if (deg !== turnDeg) { turnDeg = deg; flip = 0; misses = 0; locked = false; face = null; }
+    },
     loadFace,
-    faceReady: () => !!fd,
-    debug: () => ({ face, slimOn, fd: !!fd, loading: !!faceLoading && !fd, angle: lastT }),
+    // what's happening, for the slim button: model 'idle' | 'loading' | 'ready' | 'failed'; face found or not
+    status: () => ({ model: modelState, face: !!face, by: faceBy }),
+    debug: () => ({ face, by: faceBy, chinTurn: faceT, model: modelState }),
     start(v, canvas) {
       init(canvas); video = v;
       if (running) return;

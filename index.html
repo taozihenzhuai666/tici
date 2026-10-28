@@ -175,7 +175,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 /* phone on its side but the take is tall: the picture is a strip beside the buttons, the script fills the left, next to the front lens */
 #shoot.land.tall .prompter { top: 0; bottom: 44px; height: auto; right: calc(116px + var(--sar) + var(--stripGap, 0px) + var(--stripW)); padding: 10px 14px 0 max(16px, var(--sal)); background: none; }
 #shoot.land.tall .heard { top: auto; bottom: calc(10px + var(--sab)); left: calc((100% - 116px - var(--stripGap, 0px) - var(--stripW)) / 2); }
-#shoot.land.tall .res { top: calc(6px + var(--sat, 0px)); bottom: auto; font-size: 11px; opacity: .85; }
+#shoot.land.tall .res { display: none; }
 #shoot.land.tall .timer { bottom: auto; top: calc(10px + var(--sat)); right: calc(124px + var(--sar) + var(--stripGap, 0px)); }
 #shoot.land.tall .mic { left: calc(100% - 116px - var(--stripGap, 0px) - var(--stripW) / 2); }
 .toast { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,.75); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 15px; max-width: 80%; text-align: center; }
@@ -272,7 +272,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   </div>
 </div>
 
-<script src="whiten.js?v=5"></script>
+<script src="whiten.js?v=6"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -640,7 +640,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     const shape = isLand() || turn ? '横屏' : '竖屏';
     // with the phone turned, also show the picture's real shape and the turn, for telling what Safari is doing
     const v = $('cam'), dbg = turn ? ` · 画面${v.videoWidth}×${v.videoHeight} 手机${turn > 0 ? '右' : '左'}转 补${fix}°` : '';
-    $('res').textContent = short ? `${st.width}×${st.height} · ${f ? f + ' 帧' : ''}${cap} · ${shape}${dbg}${$('res').dataset.face || ''}` : '';
+    $('res').textContent = short ? `${st.width}×${st.height} · ${f ? f + ' 帧' : ''}${cap} · ${shape}${dbg}` : '';
   }
 
   // turning the phone: re-lay the prompter; between takes also re-ask for full resolution
@@ -727,24 +727,20 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (!fxLevel && !slimOn) { Whiten.stop(); $('fx').hidden = true; return; }
     try { Whiten.setLevel(fxLevel); Whiten.start($('cam'), $('fx')); $('fx').hidden = false; }
     catch (e) { fxLevel = 0; slimOn = false; fxLabels(); toast('这台手机开不了美白：' + e.message, 4000); return; }
-    // slimming works straight away (face found by skin colour); the face model loads quietly
-    // in the background and takes over when ready. If it can't load, slimming carries on without it.
+    // the face model loads in the background; until it's ready the picture is left as it is
     Whiten.setSlim(slimOn); Whiten.setTurn(fix);
-    if (slimOn && !Whiten.faceReady()) Whiten.loadFace().catch(e => { window.__faceErr = String(e && e.message || e); });
+    Whiten.loadFace().catch(() => toast('人脸识别没加载上：美白先按肤色凑合，瘦脸暂停。下次打开摄像头会再试', 4500));
   }
   $('fxBtn').onclick = () => {
     if (rec && rec.state === 'recording') return toast('录像中不能换美白，先停止再换');
     fxLevel = (fxLevel + 1) % 4; save('tici.white', String(fxLevel)); applyFx();
   };
-  // show on the button whether a face is being found, so "nothing happens" can be told apart from "no face"
+  // show on the slim button what face finding is doing, so "nothing happens" can be told apart
   setInterval(() => {
     if ($('shoot').hidden || !slimOn || !window.Whiten || !Whiten.isRunning()) return;
-    const d = Whiten.debug(), f = d.face;
-    $('slimBtn').textContent = f ? '瘦脸 开' : '瘦脸 没找到脸';
-    // what face finding is doing, for screenshots when it doesn't work
-    const how = d.fd ? `模型 转${d.angle}°` : window.__faceErr ? '模型失败 用肤色' : d.loading ? '模型加载中 用肤色' : '用肤色';
-    $('res').dataset.face = ` · 找脸:${f ? '有' : '无'} ${how}`;
-    showRes();
+    const st = Whiten.status();
+    $('slimBtn').textContent = st.model === 'loading' || st.model === 'idle' ? '瘦脸 准备中'
+      : st.model === 'failed' ? '瘦脸 用不了' : st.face ? '瘦脸 开' : '瘦脸 没找到脸';
   }, 1000);
   $('slimBtn').onclick = () => {
     if (rec && rec.state === 'recording') return toast('录像中不能开关瘦脸，先停止再换');
