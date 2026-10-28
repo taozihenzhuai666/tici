@@ -85,7 +85,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 #ui { position: absolute; inset: 0; }
 #shoot.turned #ui { inset: auto; left: 50%; top: 50%; width: var(--uiW); height: var(--uiH); transform: translate(-50%, -50%) rotate(var(--uiRot)); }
 /* camera picture with the UI turned: turned by --camFix to stand the person up (Safari's picture can come any way round), then mirrored like a mirror, then turned with the UI */
-#shoot.turned #cam, #shoot.turned #fx { inset: auto; left: 50%; top: 50%; width: var(--camW); height: var(--camH); transform: translate(-50%, -50%) rotate(var(--uiRot)) scaleX(-1) rotate(var(--camFix)); }
+#shoot.turned #cam, #shoot.turned #fx { inset: auto; left: 50%; top: 50%; width: var(--camW); height: var(--camH); transform: translate(-50%, -50%) rotate(var(--uiRot)) translateX(var(--camShift, 0px)) scaleX(-1) rotate(var(--camFix)); }
 #shoot { position: fixed; inset: 0; z-index: 10; background: #000; overflow: hidden; touch-action: manipulation; }
 #cam, #fx { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; transform: scaleX(-1); }
 .prompter {
@@ -172,6 +172,12 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 #shoot.land .done .btns { grid-column: 2; grid-template-columns: 1fr; }
 #shoot.land .done #doneBack, #shoot.land .done a { grid-column: 2; }
 #shoot.land.turned .done video { max-height: 60vw; }
+/* phone on its side but the take is tall: the picture is a strip beside the buttons, the script fills the left, next to the front lens */
+#shoot.land.tall .prompter { top: 0; bottom: 44px; height: auto; right: calc(116px + var(--sar) + var(--stripW)); padding: 10px 14px 0 max(16px, var(--sal)); background: none; }
+#shoot.land.tall .heard { top: auto; bottom: calc(10px + var(--sab)); left: calc((100% - 116px - var(--stripW)) / 2); }
+#shoot.land.tall .res { display: none; }
+#shoot.land.tall .timer { bottom: auto; top: calc(10px + var(--sat)); right: calc(124px + var(--sar)); }
+#shoot.land.tall .mic { left: calc(100% - 116px - var(--stripW) / 2); }
 .toast { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,.75); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 15px; max-width: 80%; text-align: center; }
 </style>
 </head>
@@ -353,7 +359,9 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   }
 
   // where the reading line sits inside the prompter (second line)
-  const readY = () => Math.round(fsize * 1.45 * 1.0);
+  // tall take with the phone on its side: the lens is level with the middle of the left side, so read there
+  let tall = false;
+  const readY = () => tall ? Math.max(Math.round(fsize * 1.45), Math.round($('prompter').clientHeight * .42 - fsize * .7)) : Math.round(fsize * 1.45 * 1.0);
 
   function render(force) {
     if (!normSpans.length) return;
@@ -370,7 +378,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     const y = span.offsetTop;
     $('ptext').style.transform = `translateY(${readY() - y}px)`;
     const rl = $('readline');
-    rl.style.top = `calc(var(--sat) + 8px + ${readY() + fsize * 1.45 / 2 - 9}px)`;
+    rl.style.top = `calc(${tall ? '10px' : 'var(--sat) + 8px'} + ${readY() + fsize * 1.45 / 2 - 9}px)`;
   }
 
   // LCS length between two short arrays
@@ -545,6 +553,16 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     // the picture's own box, before --camFix turns it to fill the turned UI
     sh.style.setProperty('--camW', (side ? innerWidth : innerHeight) + 'px');
     sh.style.setProperty('--camH', (side ? innerHeight : innerWidth) + 'px');
+    // is the take tall? then lay it out as a strip on the right, next to the buttons
+    const v = $('cam'), vw = v.videoWidth, vh = v.videoHeight;
+    tall = !!turn && !!vw && (side ? vw > vh : vh > vw);
+    sh.classList.toggle('tall', tall);
+    if (tall) {
+      const W = innerHeight, H = innerWidth, bar = 116;                    // the turned UI's size
+      const stripW = Math.min(W - bar, H * Math.min(vw, vh) / Math.max(vw, vh));
+      sh.style.setProperty('--stripW', stripW + 'px');
+      sh.style.setProperty('--camShift', (W - bar - stripW / 2 - W / 2) + 'px');
+    } else sh.style.setProperty('--camShift', '0px');
     if (!sh.hidden) { syncBar(); shownPos = -1; render(true); showRes(); }
   }
   $('cam').addEventListener('resize', () => applyTurn());
