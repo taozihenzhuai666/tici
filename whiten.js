@@ -9,7 +9,7 @@
   const SLIM = .06;    // "a little": cheeks move in about 6%
   const here = p => new URL(p, document.baseURI).href;
   let gl = null, cv = null, video = null, prog = null, uK = null, uFace = null, uSlim = null, uSide = null, tex = null;
-  let running = false, level = 2, slimOn = false, sideways = false, vfcId = 0, rafId = 0;
+  let running = false, level = 2, slimOn = false, sideways = false, turnDeg = 0, vfcId = 0, rafId = 0;
   let fd = null, faceLoading = null, face = null, frameN = 0, lastTs = 0;
   const gCv = document.createElement('canvas'), gCtx = gCv.getContext('2d', { willReadFrequently: true });
 
@@ -37,20 +37,41 @@
   function glide(nf) { face = face ? face.map((v, i) => v + (nf[i] - v) * .4) : nf; }
   function fade() { if (face) { face[2] *= .85; face[3] *= .85; if (face[2] < .02) face = null; } }
 
-  // with the model: the video goes in as is
+  // with the model. It only knows upright faces, so when the person lies across the picture
+  // (phone held sideways) the picture is stood up first and the box turned back afterwards.
+  // Which way is up isn't certain (mirroring), so if one way finds nothing, the other is tried next.
+  const rCv = document.createElement('canvas'), rCtx = rCv.getContext('2d');
+  let flip = 0;
   function findFaceModel() {
     const W = video.videoWidth, H = video.videoHeight;
+    const t = ((turnDeg + flip) % 360 + 360) % 360;
+    let src = video, sw = W, sh = H;
+    if (t) {
+      const s = Math.min(1, 640 / Math.max(W, H)), w = Math.round(W * s), h = Math.round(H * s);
+      const side = t % 180 !== 0;
+      sw = side ? h : w; sh = side ? w : h;
+      if (rCv.width !== sw || rCv.height !== sh) { rCv.width = sw; rCv.height = sh; }
+      rCtx.setTransform(1, 0, 0, 1, sw / 2, sh / 2); rCtx.rotate(t * Math.PI / 180);
+      rCtx.drawImage(video, -w / 2, -h / 2, w, h);
+      src = rCv;
+    }
     lastTs = Math.max(lastTs + 1, Math.round(performance.now()));
     try {
-      const d = fd.detectForVideo(video, lastTs).detections || [];
+      const d = fd.detectForVideo(src, lastTs).detections || [];
       let best = null;
       for (const x of d) if (!best || x.boundingBox.width > best.boundingBox.width) best = x;
-      if (!best) return fade();
+      if (!best) { if (turnDeg % 180) flip = flip ? 0 : 180; return findFaceSkin(); }
       const bb = best.boundingBox;
-      // the model's box stops at the eyebrows: stretch it up over the forehead
-      const hh = bb.height / 2 / H;
-      glide([(bb.originX + bb.width / 2) / W, (bb.originY + bb.height / 2) / H - hh * .25, bb.width / 2 / W, hh * 1.25]);
-    } catch (e) {}
+      // the model's box stops at the eyebrows: stretch it up over the forehead (upright terms)
+      const hh = bb.height / 2 / sh;
+      const a = (bb.originX + bb.width / 2) / sw, b = (bb.originY + bb.height / 2) / sh - hh * .25;
+      const hw = bb.width / 2 / sw, hv = hh * 1.25;
+      // back to the camera picture's own terms
+      if (t === 90) glide([b, 1 - a, hv, hw]);
+      else if (t === 180) glide([1 - a, 1 - b, hw, hv]);
+      else if (t === 270) glide([1 - b, a, hv, hw]);
+      else glide([a, b, hw, hv]);
+    } catch (e) { findFaceSkin(); }
   }
 
   // without the model: the biggest solid skin-coloured blob that isn't a whole wall
@@ -173,6 +194,7 @@ void main() {
     setLevel(n) { level = n; },
     setSlim(on) { slimOn = on; },
     setSideways(on) { sideways = on; },
+    setTurn(deg) { turnDeg = ((deg % 360) + 360) % 360; sideways = turnDeg % 180 !== 0; flip = 0; },
     loadFace,
     faceReady: () => !!fd,
     debug: () => ({ face, slimOn, fd: !!fd }),

@@ -540,7 +540,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     turn = t;
     if (keepFix !== true) fix = loadFix();
     const side = fix % 180 !== 0;
-    if (window.Whiten) Whiten.setSideways(side);
+    if (window.Whiten) Whiten.setTurn(fix);
     sh.classList.toggle('land', isLand() || !!turn);
     sh.classList.toggle('turned', !!turn);
     sh.classList.toggle('turn-r', turn === 90);
@@ -726,7 +726,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     catch (e) { fxLevel = 0; slimOn = false; fxLabels(); toast('这台手机开不了美白：' + e.message, 4000); return; }
     // slimming works straight away (face found by skin colour); the face model loads quietly
     // in the background and takes over when ready. If it can't load, slimming carries on without it.
-    Whiten.setSlim(slimOn); Whiten.setSideways(fix % 180 !== 0);
+    Whiten.setSlim(slimOn); Whiten.setTurn(fix);
     if (slimOn && !Whiten.faceReady()) Whiten.loadFace().catch(e => { window.__faceErr = String(e && e.message || e); });
   }
   $('fxBtn').onclick = () => {
