@@ -857,6 +857,8 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (discard) { chunks = []; return; }
     const type = (rec && rec.mimeType) || 'video/mp4';
     lastBlob = new Blob(chunks, { type }); saved = false;
+    // make the file now, so tapping 保存视频 opens the share menu at once (iOS drops it if the tap waits on a big file)
+    lastFile = makeFile(lastBlob);
     if (lastBlob.size < 2000) toast('这段没录上画面（只有 ' + lastBlob.size + ' 字节）。点“重拍”再试一次', 5000);
     const url = URL.createObjectURL(lastBlob);
     $('playback').src = url;
@@ -906,16 +908,25 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     pos = 0; shownPos = -1; render(true); $('timer').textContent = '00:00';
     setHeard('点红色按钮开始', false);
   };
-  $('saveBtn').onclick = async () => {
-    if (!lastBlob) return;
-    const ext = lastBlob.type.includes('webm') ? 'webm' : 'mp4';
+  let lastFile = null;
+  function makeFile(blob) {
+    const ext = blob.type.includes('webm') ? 'webm' : 'mp4';
     const d = new Date(), stamp = `${d.getMonth() + 1}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
     // plain type for the file: with codecs on it, iOS may not offer 存储视频
-    const file = new File([lastBlob], `提词录像-${stamp}.${ext}`, { type: ext === 'webm' ? 'video/webm' : 'video/mp4' });
+    return new File([blob], `提词录像-${stamp}.${ext}`, { type: ext === 'webm' ? 'video/webm' : 'video/mp4' });
+  }
+  $('saveBtn').onclick = async () => {
+    if (!lastBlob) return;
+    const file = lastFile || (lastFile = makeFile(lastBlob));
     let why = '';
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try { await navigator.share({ files: [file] }); saved = true; return; }
-      catch (e) { if (e.name === 'AbortError') return; why = e.name + (e.message ? '：' + e.message : ''); }
+      catch (e) {
+        if (e.name === 'AbortError') return;
+        // iOS sometimes won't open the menu the first time for a big video; a second tap usually does
+        if (e.name === 'NotAllowedError') return toast('保存菜单没弹出来，再点一次“保存视频”', 4000);
+        why = e.name + (e.message ? '：' + e.message : '');
+      }
     } else why = '这个浏览器不能直接分享视频';
     const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name;
     document.body.appendChild(a); a.click(); a.remove();
