@@ -39,12 +39,14 @@
 
   // with the model. It only knows upright faces, so when the person lies across the picture
   // (phone held sideways) the picture is stood up first and the box turned back afterwards.
-  // Which way is up isn't certain (mirroring), so if one way finds nothing, the other is tried next.
+  // Which way is up isn't certain (mirroring, how Safari hands the picture over), so when nothing is
+  // found the next quarter turn is tried; the turn that finds a face is kept.
   const rCv = document.createElement('canvas'), rCtx = rCv.getContext('2d');
-  let flip = 0;
+  let flip = 0, misses = 0, lastT = 0;
+  const FLIPS = [0, 180, 90, 270];
   function findFaceModel() {
     const W = video.videoWidth, H = video.videoHeight;
-    const t = ((turnDeg + flip) % 360 + 360) % 360;
+    const t = lastT = ((turnDeg + FLIPS[flip]) % 360 + 360) % 360;
     let src = video, sw = W, sh = H;
     if (t) {
       const s = Math.min(1, 640 / Math.max(W, H)), w = Math.round(W * s), h = Math.round(H * s);
@@ -60,7 +62,8 @@
       const d = fd.detectForVideo(src, lastTs).detections || [];
       let best = null;
       for (const x of d) if (!best || x.boundingBox.width > best.boundingBox.width) best = x;
-      if (!best) { if (turnDeg % 180) flip = flip ? 0 : 180; return findFaceSkin(); }
+      if (!best) { if (++misses >= 2) { misses = 0; flip = (flip + 1) % 4; } return findFaceSkin(); }
+      misses = 0;
       const bb = best.boundingBox;
       // the model's box stops at the eyebrows: stretch it up over the forehead (upright terms)
       const hh = bb.height / 2 / sh;
@@ -194,10 +197,10 @@ void main() {
     setLevel(n) { level = n; },
     setSlim(on) { slimOn = on; },
     setSideways(on) { sideways = on; },
-    setTurn(deg) { turnDeg = ((deg % 360) + 360) % 360; sideways = turnDeg % 180 !== 0; flip = 0; },
+    setTurn(deg) { turnDeg = ((deg % 360) + 360) % 360; sideways = turnDeg % 180 !== 0; flip = 0; misses = 0; },
     loadFace,
     faceReady: () => !!fd,
-    debug: () => ({ face, slimOn, fd: !!fd }),
+    debug: () => ({ face, slimOn, fd: !!fd, loading: !!faceLoading && !fd, angle: lastT }),
     start(v, canvas) {
       init(canvas); video = v;
       if (running) return;

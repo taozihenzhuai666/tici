@@ -175,7 +175,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 /* phone on its side but the take is tall: the picture is a strip beside the buttons, the script fills the left, next to the front lens */
 #shoot.land.tall .prompter { top: 0; bottom: 44px; height: auto; right: calc(116px + var(--sar) + var(--stripW)); padding: 10px 14px 0 max(16px, var(--sal)); background: none; }
 #shoot.land.tall .heard { top: auto; bottom: calc(10px + var(--sab)); left: calc((100% - 116px - var(--stripW)) / 2); }
-#shoot.land.tall .res { display: none; }
+#shoot.land.tall .res { top: calc(6px + var(--sat, 0px)); bottom: auto; font-size: 11px; opacity: .85; }
 #shoot.land.tall .timer { bottom: auto; top: calc(10px + var(--sat)); right: calc(124px + var(--sar)); }
 #shoot.land.tall .mic { left: calc(100% - 116px - var(--stripW) / 2); }
 .toast { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,.75); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 15px; max-width: 80%; text-align: center; }
@@ -272,7 +272,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   </div>
 </div>
 
-<script src="whiten.js"></script>
+<script src="whiten.js?v=5"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -637,7 +637,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     const shape = isLand() || turn ? '横屏' : '竖屏';
     // with the phone turned, also show the picture's real shape and the turn, for telling what Safari is doing
     const v = $('cam'), dbg = turn ? ` · 画面${v.videoWidth}×${v.videoHeight} 手机${turn > 0 ? '右' : '左'}转 补${fix}°` : '';
-    $('res').textContent = short ? `${st.width}×${st.height} · ${f ? f + ' 帧' : ''}${cap} · ${shape}${dbg}` : '';
+    $('res').textContent = short ? `${st.width}×${st.height} · ${f ? f + ' 帧' : ''}${cap} · ${shape}${dbg}${$('res').dataset.face || ''}` : '';
   }
 
   // turning the phone: re-lay the prompter; between takes also re-ask for full resolution
@@ -736,8 +736,12 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   // show on the button whether a face is being found, so "nothing happens" can be told apart from "no face"
   setInterval(() => {
     if ($('shoot').hidden || !slimOn || !window.Whiten || !Whiten.isRunning()) return;
-    const f = Whiten.debug().face;
+    const d = Whiten.debug(), f = d.face;
     $('slimBtn').textContent = f ? '瘦脸 开' : '瘦脸 没找到脸';
+    // what face finding is doing, for screenshots when it doesn't work
+    const how = d.fd ? `模型 转${d.angle}°` : window.__faceErr ? '模型失败 用肤色' : d.loading ? '模型加载中 用肤色' : '用肤色';
+    $('res').dataset.face = ` · 找脸:${f ? '有' : '无'} ${how}`;
+    showRes();
   }, 1000);
   $('slimBtn').onclick = () => {
     if (rec && rec.state === 'recording') return toast('录像中不能开关瘦脸，先停止再换');
