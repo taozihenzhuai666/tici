@@ -561,7 +561,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
       const W = innerHeight, H = innerWidth, bar = 116;                    // the turned UI's size
       const stripW = Math.min(W - bar, H * Math.min(vw, vh) / Math.max(vw, vh));
       // leave a gap before the buttons, so the picture sits nearer the middle
-      const gap = Math.round(Math.max(0, Math.min(60, (W - bar - stripW) * .1)));
+      const gap = Math.round(Math.max(0, Math.min(W / 2 - bar - stripW / 2, (W - bar - stripW) * .25)));   // never past the middle
       sh.style.setProperty('--stripW', stripW + 'px');
       sh.style.setProperty('--stripGap', gap + 'px');
       sh.style.setProperty('--camShift', (W - bar - gap - stripW / 2 - W / 2) + 'px');
