@@ -569,7 +569,11 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   // record the picture turned the same way as on screen (not mirrored), so the take stands the way it was seen
   let turnCv = null, turnRun = false;
   function turnedTrack(t) {
+    if (turnCv) turnCv.remove();
+    // Safari only sends frames from a canvas that is in the page, so keep it in, out of sight
     turnCv = document.createElement('canvas');
+    turnCv.style.cssText = 'position:absolute;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+    $('shoot').appendChild(turnCv);
     const x = turnCv.getContext('2d'), v = $('cam');
     const side = t % 180 !== 0;
     turnRun = true;
@@ -853,6 +857,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (discard) { chunks = []; return; }
     const type = (rec && rec.mimeType) || 'video/mp4';
     lastBlob = new Blob(chunks, { type }); saved = false;
+    if (lastBlob.size < 2000) toast('这段没录上画面（只有 ' + lastBlob.size + ' 字节）。点“重拍”再试一次', 5000);
     const url = URL.createObjectURL(lastBlob);
     $('playback').src = url;
     $('dl').href = url; $('dl').hidden = false;
@@ -905,12 +910,16 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (!lastBlob) return;
     const ext = lastBlob.type.includes('webm') ? 'webm' : 'mp4';
     const d = new Date(), stamp = `${d.getMonth() + 1}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
-    const file = new File([lastBlob], `提词录像-${stamp}.${ext}`, { type: lastBlob.type });
+    // plain type for the file: with codecs on it, iOS may not offer 存储视频
+    const file = new File([lastBlob], `提词录像-${stamp}.${ext}`, { type: ext === 'webm' ? 'video/webm' : 'video/mp4' });
+    let why = '';
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file] }); saved = true; return; } catch (e) { if (e.name === 'AbortError') return; }
-    }
+      try { await navigator.share({ files: [file] }); saved = true; return; }
+      catch (e) { if (e.name === 'AbortError') return; why = e.name + (e.message ? '：' + e.message : ''); }
+    } else why = '这个浏览器不能直接分享视频';
     const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name;
     document.body.appendChild(a); a.click(); a.remove();
+    toast(`没弹出保存菜单（${why}）。点下面“保存不了？点这里打开视频”，再长按保存`, 6000);
   };
 
   // test hook for the alignment logic (no answers here, safe to expose)

@@ -129,7 +129,7 @@ void main() {
   function init(canvas) {
     if (gl && cv === canvas) return;
     cv = canvas;
-    gl = canvas.getContext('webgl', { antialias: false, alpha: false, premultipliedAlpha: false });
+    gl = canvas.getContext('webgl', { antialias: false, alpha: false, premultipliedAlpha: false, preserveDrawingBuffer: true });   // kept after drawing, so the turned recording can copy it
     if (!gl) throw new Error('这个浏览器不支持 WebGL');
     const sh = (t, s) => { const x = gl.createShader(t); gl.shaderSource(x, s); gl.compileShader(x);
       if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(x)); return x; };
