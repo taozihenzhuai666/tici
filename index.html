@@ -178,7 +178,8 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 #shoot.land.tall .res { display: none; }
 #shoot.land.tall .timer { bottom: auto; top: calc(10px + var(--sat)); right: calc(124px + var(--sar) + var(--stripGap, 0px)); }
 #shoot.land.tall .mic { left: calc(100% - 116px - var(--stripGap, 0px) - var(--stripW) / 2); }
-.toast { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,.75); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 15px; max-width: 80%; text-align: center; }
+.toast { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,.75); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 15px; max-width: 80%; text-align: center; white-space: pre-line; }
+#fxBtn, #slimBtn { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 </style>
 </head>
 <body>
@@ -272,7 +273,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   </div>
 </div>
 
-<script src="whiten.js?v=6"></script>
+<script src="whiten.js?v=7"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -729,22 +730,43 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     catch (e) { fxLevel = 0; slimOn = false; fxLabels(); toast('这台手机开不了美白：' + e.message, 4000); return; }
     // the face model loads in the background; until it's ready the picture is left as it is
     Whiten.setSlim(slimOn); Whiten.setTurn(fix);
-    Whiten.loadFace().catch(() => toast('人脸识别没加载上：美白先按肤色凑合，瘦脸暂停。下次打开摄像头会再试', 4500));
+    Whiten.loadFace().catch(e => toast(`人脸识别没加载上（${e.message}）：美白先按肤色凑合，瘦脸暂停，会自动再试。长按美白按钮看详情`, 5000));
   }
   $('fxBtn').onclick = () => {
     if (rec && rec.state === 'recording') return toast('录像中不能换美白，先停止再换');
-    fxLevel = (fxLevel + 1) % 4; save('tici.white', String(fxLevel)); applyFx();
+    fxLevel = (fxLevel + 1) % 4; save('tici.white', String(fxLevel)); fxTapT = Date.now(); applyFx();
   };
-  // show on the slim button what face finding is doing, so "nothing happens" can be told apart
+  // show on the buttons what face finding is doing, so "nothing happens" can be told apart
+  let fxTapT = 0;
   setInterval(() => {
-    if ($('shoot').hidden || !slimOn || !window.Whiten || !Whiten.isRunning()) return;
+    if ($('shoot').hidden || !window.Whiten || !Whiten.isRunning() || Date.now() - fxTapT < 1500) return;
     const st = Whiten.status();
-    $('slimBtn').textContent = st.model === 'loading' || st.model === 'idle' ? '瘦脸 准备中'
-      : st.model === 'failed' ? '瘦脸 用不了' : st.face ? '瘦脸 开' : '瘦脸 没找到脸';
+    const note = st.model === 'loading' || st.model === 'idle' ? '准备中' : st.model === 'ready' && !st.face ? '没找到脸' : '';
+    $('fxBtn').textContent = fxLevel ? `美白 ${note || FX_NAMES[fxLevel]}` : '美白 关';
+    if (slimOn) $('slimBtn').textContent = `瘦脸 ${note || (st.model === 'failed' ? '用不了' : '开')}`;
   }, 1000);
+  // hold either button: what the face finder is doing, to tell from a screenshot why it isn't working
+  function fxInfo() {
+    if (!window.Whiten) return toast('美白程序没加载上（whiten.js）', 5000);
+    const d = Whiten.debug();
+    const m = { idle: '没开始', loading: '加载中', ready: '已加载', failed: '加载失败' }[d.model] || d.model;
+    toast(`人脸模型：${m}${d.loadMs ? `（${(d.loadMs / 1000).toFixed(1)} 秒）` : ''}${d.tries > 1 ? ` 第${d.tries}次` : ''}${d.err ? ' · ' + d.err : ''}
+`
+      + `画面 ${d.size} · 找了 ${d.looked} 次，找到 ${d.found} 次${d.face ? ` · 现在有脸（${d.by === 'model' ? '模型' : '肤色'}，把握 ${d.score}）` : ' · 现在没脸'}
+`
+      + `手机转 ${d.turn}° · 找脸用 ${d.tryT}° · 美白 ${FX_NAMES[fxLevel]} · 瘦脸 ${slimOn ? '开' : '关'}`, 8000);
+  }
+  for (const id of ['fxBtn', 'slimBtn']) {
+    let hold = 0, held = false;
+    const b = $(id);
+    b.addEventListener('touchstart', () => { held = false; hold = setTimeout(() => { held = true; fxInfo(); }, 700); }, { passive: true });
+    b.addEventListener('touchend', e => { clearTimeout(hold); if (held) e.preventDefault(); });
+    b.addEventListener('touchmove', () => clearTimeout(hold), { passive: true });
+    b.addEventListener('contextmenu', e => { e.preventDefault(); fxInfo(); });
+  }
   $('slimBtn').onclick = () => {
     if (rec && rec.state === 'recording') return toast('录像中不能开关瘦脸，先停止再换');
-    slimOn = !slimOn; save('tici.slim', slimOn ? '1' : '0'); applyFx();
+    slimOn = !slimOn; save('tici.slim', slimOn ? '1' : '0'); fxTapT = Date.now(); applyFx();
   };
 
   function closeShoot() {
