@@ -856,7 +856,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     starting = false; $('recBtn').disabled = false;
     setHeard(follow ? '在听…说吧' : '匀速滚动中', follow);
     const type = pickType();
-    try { rec = new MediaRecorder(recStream, type ? { mimeType: type, videoBitsPerSecond: 16_000_000, audioBitsPerSecond: 128_000 } : undefined); }
+    try { rec = new MediaRecorder(recStream, type ? { mimeType: type, videoBitsPerSecond: 6_000_000, audioBitsPerSecond: 128_000 } : undefined); }
     catch (e) { toast('这个浏览器录不了像'); return; }
     if (!aTrack) toast('没拿到麦克风，录出来的视频会没有声音', 3500);
     chunks = [];
@@ -895,7 +895,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     $('playback').src = url;
     $('dl').href = url; $('dl').hidden = false;
     $('done').hidden = false; setSheet(false);
-    setHeard('录好了', false);
+    setHeard('录好了 · ' + (lastBlob.size / 1048576).toFixed(0) + 'MB', false);
   }
   // ---------- result sheet: drag down to tuck it away, tap or drag up to bring it back ----------
   const sheet = $('done');
