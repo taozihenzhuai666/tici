@@ -273,7 +273,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   </div>
 </div>
 
-<script src="whiten.js?v=8"></script>
+<script src="whiten.js?v=9"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -671,7 +671,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     const listenTilt = () => { window.removeEventListener('deviceorientation', onTilt); window.addEventListener('deviceorientation', onTilt); };
     if (DOE && typeof DOE.requestPermission === 'function') DOE.requestPermission().then(r => r === 'granted' && listenTilt()).catch(() => {});
     else listenTilt();
-    // the floating-window mode may have set a play-only session, which blocks the mic
+    // make sure the audio session can record (a play-only session blocks the mic)
     try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch (e) {}
     // try the nicest settings first, then simpler ones; some phones refuse a combination
     const tries = [

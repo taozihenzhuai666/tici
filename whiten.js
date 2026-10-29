@@ -1,5 +1,5 @@
 // 美白 + 瘦脸，只动脸（和脖子上露出的皮肤），别的地方（墙、衣服、背景）一点不动，清晰度、对比度不降。
-// 找脸：用 MediaPipe 人脸检测（文件在本站 mp/，开美白或瘦脸时加载，用 CPU 和普通画布——iPhone 上 GPU、OffscreenCanvas 会卡住）。
+// 找脸：用 MediaPipe 人脸检测（打开网页就开始下载，用 CPU 和普通画布——iPhone 上 GPU、OffscreenCanvas 会卡住）。
 //       模型程序从国内镜像下（github.io 在国内太慢），下过一次存在手机里。
 //       只信模型：没找到脸、模型还没好，就什么都不改，不会去动墙、抱枕（不再按肤色猜）。
 // 脸朝哪边：不靠猜。模型给出眼睛和嘴的位置，从眼睛指向嘴就是下巴方向——手机怎么拿、画面怎么转都对得上，
@@ -15,7 +15,7 @@
   let running = false, level = 2, slimOn = false, turnDeg = 0, vfcId = 0, rafId = 0;
   let fd = null, faceLoading = null, modelState = 'idle', loadErr = '', loadMs = 0, tries = 0;
   // face, in the camera picture's own pixels: centre x, y; chin direction dx, dy (unit); half width, half length
-  let face = null, faceBy = '', frameN = 0, lastTs = 0, found = 0, looked = 0;
+  let face = null, frameN = 0, lastTs = 0, found = 0, looked = 0;
 
   // The face model's program is 9.4 MB. From github.io in China that can take minutes, which is why it
   // never got going on the phone. So: fetch it from a mirror that's quick in China (same files, same
@@ -88,13 +88,12 @@
   }
 
   // follow the face smoothly; jump when it's a new one
-  function glide(nf, by) {
-    if (!face || faceBy !== by || Math.hypot(nf[0] - face[0], nf[1] - face[1]) > nf[4] * 1.5) face = nf.slice();
+  function glide(nf) {
+    if (!face || Math.hypot(nf[0] - face[0], nf[1] - face[1]) > nf[4] * 1.5) face = nf.slice();
     else {
       for (let i = 0; i < 6; i++) face[i] += (nf[i] - face[i]) * .45;
       const n = Math.hypot(face[2], face[3]) || 1; face[2] /= n; face[3] /= n;
     }
-    faceBy = by;
   }
   function fade() { if (face) { face[4] *= .85; face[5] *= .85; if (face[4] < 6) face = null; } }
 
@@ -162,7 +161,7 @@
     const hw = bb.width / 2 / s, hb = bb.height / 2 / s;
     const c = back(bb.originX + bb.width / 2, bb.originY + bb.height / 2);
     // the model's box stops at the eyebrows: stretch it up over the forehead
-    glide([c[0] - dx * hb * .25, c[1] - dy * hb * .25, dx, dy, hw, hb * 1.25], 'model');
+    glide([c[0] - dx * hb * .25, c[1] - dy * hb * .25, dx, dy, hw, hb * 1.25]);
     lastScore = Math.round(hit.score * 100) / 100;
   }
   let lastScore = 0;
@@ -264,9 +263,9 @@ void main() {
     },
     loadFace,
     // what's happening, for the buttons: model 'idle' | 'loading' | 'ready' | 'failed'; face found or not
-    status: () => ({ model: modelState, face: !!face, by: faceBy, stage, pct }),
+    status: () => ({ model: modelState, face: !!face, stage, pct }),
     // for the long-press details
-    debug: () => ({ model: modelState, stage, pct, err: loadErr, loadMs, tries, looked, found, turn: turnDeg, tryT, score: lastScore, face: face && face.map(v => Math.round(v * 100) / 100), by: faceBy,
+    debug: () => ({ model: modelState, stage, pct, err: loadErr, loadMs, tries, looked, found, turn: turnDeg, tryT, score: lastScore, face: face && face.map(v => Math.round(v * 100) / 100),
       size: video ? video.videoWidth + '×' + video.videoHeight : '' }),
     start(v, canvas) {
       init(canvas); video = v;
