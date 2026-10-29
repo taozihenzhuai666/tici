@@ -41,7 +41,6 @@ body {
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 h1 { font-size: 22px; margin: 0; letter-spacing: .02em; }
 .rec-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); margin-right: 8px; vertical-align: 2px; }
-.hint { color: var(--muted); font-size: 14px; }
 
 
 
@@ -273,7 +272,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   </div>
 </div>
 
-<script src="whiten.js?v=10"></script>
+<script src="whiten.js?v=11"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -646,9 +645,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     const cap = maxFps && f < 50 ? `（最高 ${maxFps} 帧）` : '';
     // Safari may report the size in the camera's own terms, so the shape comes from how the phone is held
     const shape = isLand() || turn ? '横屏' : '竖屏';
-    // with the phone turned, also show the picture's real shape and the turn, for telling what Safari is doing
-    const v = $('cam'), dbg = turn ? ` · 画面${v.videoWidth}×${v.videoHeight} 手机${turn > 0 ? '右' : '左'}转 补${fix}°` : '';
-    $('res').textContent = short ? `${st.width}×${st.height} · ${f ? f + ' 帧' : ''}${cap} · ${shape}${dbg}` : '';
+    $('res').textContent = short ? `${st.width}×${st.height} · ${f ? f + ' 帧' : ''}${cap} · ${shape}` : '';
   }
 
   // turning the phone: re-lay the prompter; between takes also re-ask for full resolution
