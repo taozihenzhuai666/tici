@@ -1,7 +1,7 @@
 // 美白 + 瘦脸，只动脸（和脖子上露出的皮肤），别的地方（墙、衣服、背景）一点不动，清晰度、对比度不降。
-// 找脸：用 MediaPipe 人脸检测（文件在本站 mp/，开美白或瘦脸时加载，用 CPU——iPhone 上 GPU 会卡住不动）。
-//       模型能用时只信模型：没找到脸就什么都不改，不会去动墙、抱枕。
-//       模型实在加载不了，才用保底办法按肤色找脸，而且只做美白，不做瘦脸（找错了扭曲很难看）。
+// 找脸：用 MediaPipe 人脸检测（文件在本站 mp/，开美白或瘦脸时加载，用 CPU 和普通画布——iPhone 上 GPU、OffscreenCanvas 会卡住）。
+//       模型程序从国内镜像下（github.io 在国内太慢），下过一次存在手机里。
+//       只信模型：没找到脸、模型还没好，就什么都不改，不会去动墙、抱枕（不再按肤色猜）。
 // 脸朝哪边：不靠猜。模型给出眼睛和嘴的位置，从眼睛指向嘴就是下巴方向——手机怎么拿、画面怎么转都对得上，
 //       脸是倒着、歪着都能认出来，不会再锁在错的方向上。
 // 美白：脸和脖子范围里、而且是皮肤颜色的地方提亮、去黄（暗部、轮廓不变，不发灰）。
@@ -10,38 +10,78 @@
 (function () {
   const LEVELS = { 1: .3, 2: .5, 3: .7 };
   const SLIM = .09;     // cheeks and jaw move in about 9%
-  const LOAD_LIMIT = 30000;
   const here = p => new URL(p, document.baseURI).href;
   let gl = null, cv = null, video = null, prog = null, tex = null, U = {};
   let running = false, level = 2, slimOn = false, turnDeg = 0, vfcId = 0, rafId = 0;
   let fd = null, faceLoading = null, modelState = 'idle', loadErr = '', loadMs = 0, tries = 0;
   // face, in the camera picture's own pixels: centre x, y; chin direction dx, dy (unit); half width, half length
   let face = null, faceBy = '', frameN = 0, lastTs = 0, found = 0, looked = 0;
-  const gCv = document.createElement('canvas'), gCtx = gCv.getContext('2d', { willReadFrequently: true });
 
+  // The face model's program is 9.4 MB. From github.io in China that can take minutes, which is why it
+  // never got going on the phone. So: fetch it from a mirror that's quick in China (same files, same
+  // version), fall back to this site and jsdelivr, show how far it has got, and keep it on the phone
+  // (Cache Storage) so it's instant next time.
+  const MP_VER = '0.10.14';
+  const SOURCES = [
+    `https://registry.npmmirror.com/@mediapipe/tasks-vision/${MP_VER}/files/wasm/`,
+    here('mp/wasm/'),
+    `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/wasm/`,
+  ];
+  let stage = '', pct = 0;
+  async function getBytes(name, type, big) {
+    const key = here('mp/cache/' + MP_VER + '/' + name);
+    let box = null;
+    try { box = await caches.open('tici-mp'); const hit = await box.match(key); if (hit) return await hit.blob(); } catch (e) {}
+    let lastErr = null;
+    for (const base of name.endsWith('.tflite') ? [here('mp/')] : SOURCES) {
+      const ctl = new AbortController();
+      let stall = setTimeout(() => ctl.abort(), 15000);          // nothing arriving for 15 s: next source
+      try {
+        const r = await fetch(base + name, { signal: ctl.signal });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const total = +r.headers.get('content-length') || 0, parts = [];
+        let got = 0;
+        const rd = r.body.getReader();
+        for (;;) {
+          const { done, value } = await rd.read();
+          if (done) break;
+          parts.push(value); got += value.length;
+          clearTimeout(stall); stall = setTimeout(() => ctl.abort(), 15000);
+          if (big && total) pct = Math.min(99, Math.round(got * 100 / total));
+        }
+        clearTimeout(stall);
+        const blob = new Blob(parts, { type });
+        try { if (box) await box.put(key, new Response(blob, { headers: { 'Content-Type': type } })); } catch (e) {}
+        return blob;
+      } catch (e) { clearTimeout(stall); lastErr = e; pct = 0; }
+    }
+    throw new Error('下载失败：' + (lastErr && lastErr.name === 'AbortError' ? '网速太慢' : lastErr && lastErr.message));
+  }
   function loadFace() {
     if (fd) return Promise.resolve();
     if (faceLoading) return faceLoading;
     modelState = 'loading'; loadErr = ''; tries++;
     const t0 = performance.now();
-    const load = (async () => {
+    faceLoading = (async () => {
+      stage = '加载程序';
       const mp = await import(here('mp/vision_bundle.mjs'));
-      const files = await mp.FilesetResolver.forVisionTasks(here('mp/wasm'));
-      const d = await mp.FaceDetector.createFromOptions(files, {
-        baseOptions: { modelAssetPath: here('mp/blaze_face_short_range.tflite'), delegate: 'CPU' },
+      const kind = await mp.FilesetResolver.isSimdSupported() ? 'vision_wasm_internal' : 'vision_wasm_nosimd_internal';
+      stage = '下载模型';
+      const [js, wasm, model] = await Promise.all([
+        getBytes(kind + '.js', 'text/javascript'), getBytes(kind + '.wasm', 'application/wasm', true), getBytes('blaze_face_short_range.tflite', 'application/octet-stream')]);
+      stage = '启动模型';
+      const files = { wasmLoaderPath: URL.createObjectURL(js), wasmBinaryPath: URL.createObjectURL(wasm) };
+      const make = mp.FaceDetector.createFromOptions(files, {
+        // an ordinary canvas: Safari 17+ would otherwise get an OffscreenCanvas, which iPhones handle badly
+        canvas: document.createElement('canvas'),
+        baseOptions: { modelAssetBuffer: new Uint8Array(await model.arrayBuffer()), delegate: 'CPU' },
         runningMode: 'VIDEO', minDetectionConfidence: .5,
       });
-      fd = d; modelState = 'ready'; loadMs = Math.round(performance.now() - t0); face = null;
-    })();
-    // a slow phone or network: say so after 30 s, but keep the load going and use it if it still arrives
-    const limit = new Promise((_, no) => setTimeout(() => no(new Error('加载超过 30 秒')), LOAD_LIMIT));
-    load.catch(e => { loadErr = (e && e.message) || String(e); });
-    faceLoading = Promise.race([load, limit]).catch(e => {
-      if (!fd) { modelState = 'failed'; loadErr = loadErr || (e && e.message) || String(e); }
-      faceLoading = null;
-      if (fd) return;
-      // try again by itself a couple of times (a dropped download, a busy phone)
-      if (tries < 3) setTimeout(() => { if (!fd && !faceLoading) loadFace().catch(() => {}); }, 5000);
+      fd = await Promise.race([make, new Promise((_, no) => setTimeout(() => no(new Error('启动模型卡住')), 30000))]);
+      modelState = 'ready'; stage = ''; pct = 0; loadMs = Math.round(performance.now() - t0); face = null;
+    })().catch(e => {
+      modelState = 'failed'; loadErr = stage + '：' + ((e && e.message) || e); faceLoading = null;
+      if (tries < 3) setTimeout(() => { if (!fd && !faceLoading) loadFace().catch(() => {}); }, 3000);   // try again by itself
       throw e;
     });
     return faceLoading;
@@ -127,46 +167,6 @@
   }
   let lastScore = 0;
 
-  // without the model: the biggest solid skin-coloured blob that isn't a whole wall
-  function findFaceSkin() {
-    const W = video.videoWidth, H = video.videoHeight;
-    const gw = 48, gh = Math.max(16, Math.round(48 * H / W)), n = gw * gh;
-    if (gCv.width !== gw || gCv.height !== gh) { gCv.width = gw; gCv.height = gh; }
-    gCtx.drawImage(video, 0, 0, gw, gh);
-    const px = gCtx.getImageData(0, 0, gw, gh).data;
-    const m = new Uint8Array(n);
-    for (let i = 0; i < n; i++) {
-      const r = px[i * 4], g = px[i * 4 + 1], b = px[i * 4 + 2];
-      const y = .299 * r + .587 * g + .114 * b;
-      const cb = 128 - .168736 * r - .331264 * g + .5 * b, cr = 128 + .5 * r - .418688 * g - .081312 * b;
-      m[i] = cr >= 136 && cr <= 175 && cb >= 77 && cb <= 127 && y > 45 && y < 240 && r > g && r - b > 12 ? 1 : 0;
-    }
-    const seen = new Uint8Array(n), stack = [];
-    let best = null, bestScore = 0;
-    for (let s0 = 0; s0 < n; s0++) {
-      if (!m[s0] || seen[s0]) continue;
-      let area = 0, x0 = gw, x1 = 0, y0 = gh, y1 = 0;
-      stack.push(s0); seen[s0] = 1;
-      while (stack.length) {
-        const i = stack.pop(), x = i % gw, y = (i / gw) | 0;
-        area++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
-        if (x > 0 && m[i - 1] && !seen[i - 1]) { seen[i - 1] = 1; stack.push(i - 1); }
-        if (x < gw - 1 && m[i + 1] && !seen[i + 1]) { seen[i + 1] = 1; stack.push(i + 1); }
-        if (y > 0 && m[i - gw] && !seen[i - gw]) { seen[i - gw] = 1; stack.push(i - gw); }
-        if (y < gh - 1 && m[i + gw] && !seen[i + gw]) { seen[i + gw] = 1; stack.push(i + gw); }
-      }
-      const edges = (x0 === 0) + (x1 === gw - 1) + (y0 === 0) + (y1 === gh - 1);
-      if (area < n * .01 || area > n * .45 || edges >= 3) continue;        // too small, or a wall
-      if (area / ((x1 - x0 + 1) * (y1 - y0 + 1)) < .35) continue;            // faces are solid, not stringy
-      const cx = (x0 + x1 + 1) / 2 / gw, cy = (y0 + y1 + 1) / 2 / gh;
-      const score = area * (1.3 - Math.abs(cx - .5)) * (1.3 - Math.abs(cy - .45));   // prefer the middle
-      if (score > bestScore) { bestScore = score; best = [cx * W, cy * H, (x1 - x0 + 1) / 2 / gw * W, (y1 - y0 + 1) / 2 / gh * H]; }
-    }
-    // which way is down isn't known here; whitening doesn't need it, so use the expected turn
-    const tr = turnDeg * Math.PI / 180, dx = Math.sin(tr), dy = Math.cos(tr);
-    if (best) glide([best[0], best[1], dx, dy, Math.min(best[2], best[3]), Math.max(best[2], best[3])], 'skin'); else fade();
-  }
-
   const VS = `attribute vec2 p; varying vec2 uv;
 void main() { uv = vec2(p.x * .5 + .5, .5 - p.y * .5); gl_Position = vec4(p, 0., 1.); }`;
   // everything in the camera picture's pixels (origin top-left), so a face at any angle works
@@ -240,12 +240,11 @@ void main() {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
       if (frameN++ % 3 === 0) {
         if (fd) findFaceModel();
-        else if (modelState === 'failed' && level) findFaceSkin();   // last resort, whitening only
-        else face = null;                                           // model still loading: leave the picture alone
+        else face = null;                                           // no model (yet): leave the picture alone
       }
       const f = face || [0, 0, 0, 1, 0, 0];
       gl.uniform1f(U.k, LEVELS[level] || 0);
-      gl.uniform1f(U.slim, slimOn && faceBy === 'model' ? SLIM : 0);
+      gl.uniform1f(U.slim, slimOn ? SLIM : 0);
       gl.uniform2f(U.res, W, H);
       gl.uniform2f(U.chin, f[2], f[3]);
       gl.uniform4f(U.face, f[0], f[1], f[4], f[5]);
@@ -265,9 +264,9 @@ void main() {
     },
     loadFace,
     // what's happening, for the buttons: model 'idle' | 'loading' | 'ready' | 'failed'; face found or not
-    status: () => ({ model: modelState, face: !!face, by: faceBy }),
+    status: () => ({ model: modelState, face: !!face, by: faceBy, stage, pct }),
     // for the long-press details
-    debug: () => ({ model: modelState, err: loadErr, loadMs, tries, looked, found, turn: turnDeg, tryT, score: lastScore, face: face && face.map(v => Math.round(v * 100) / 100), by: faceBy,
+    debug: () => ({ model: modelState, stage, pct, err: loadErr, loadMs, tries, looked, found, turn: turnDeg, tryT, score: lastScore, face: face && face.map(v => Math.round(v * 100) / 100), by: faceBy,
       size: video ? video.videoWidth + '×' + video.videoHeight : '' }),
     start(v, canvas) {
       init(canvas); video = v;
