@@ -1,5 +1,6 @@
 // 美白 + 瘦脸，只动脸（和脖子上露出的皮肤），别的地方（墙、衣服、背景）一点不动，清晰度、对比度不降。
-// 找脸：用 MediaPipe 人脸检测（打开网页就开始下载，用 CPU 和普通画布——iPhone 上 GPU、OffscreenCanvas 会卡住）。
+// 找脸：用 MediaPipe 人脸检测（打开网页就开始下载，用 CPU）。放在后台线程（face-worker.js）里跑，画面和录像不等它、不掉帧；
+//       后台线程起不来或不回应，就退回页面里跑（普通画布），找得慢一点但照样能用。
 //       模型程序从国内镜像下（github.io 在国内太慢），下过一次存在手机里。
 //       只信模型：没找到脸、模型还没好，就什么都不改，不会去动墙、抱枕（不再按肤色猜）。
 // 脸朝哪边：不靠猜。模型给出眼睛和嘴的位置，从眼睛指向嘴就是下巴方向——手机怎么拿、画面怎么转都对得上，
@@ -15,7 +16,7 @@
   let running = false, level = 2, slimOn = false, turnDeg = 0, vfcId = 0, rafId = 0;
   let fd = null, faceLoading = null, modelState = 'idle', loadErr = '', loadMs = 0, tries = 0;
   // face, in the camera picture's own pixels: centre x, y; chin direction dx, dy (unit); half width, half length
-  let face = null, frameN = 0, lastTs = 0, found = 0, looked = 0;
+  let face = null, lookId = 0, lastTs = 0, found = 0, looked = 0;
 
   // The face model's program is 9.4 MB. From github.io in China that can take minutes, which is why it
   // never got going on the phone. So: fetch it from a mirror that's quick in China (same files, same
@@ -57,45 +58,90 @@
     }
     throw new Error('下载失败：' + (lastErr && lastErr.name === 'AbortError' ? '网速太慢' : lastErr && lastErr.message));
   }
+  // Looking runs in a background thread (a worker), so drawing the picture and the recording never wait
+  // on it. If the phone can't start it there, or it stops answering, it runs on the page as before.
+  function inWorker(files, model) {
+    return new Promise((ok, no) => {
+      const w = new Worker(here('face-worker.js?v=2'));
+      const wait = new Map();
+      let n = 0, up = false;
+      const fail = e => { w.terminate(); for (const p of wait.values()) p.no(e); wait.clear(); if (!up) no(e); };
+      const timer = setTimeout(() => fail(new Error('后台线程卡住')), 15000);
+      w.onerror = e => { clearTimeout(timer); fail(new Error(e.message || '后台线程出错')); };
+      w.onmessage = ({ data: m }) => {
+        if (m.id) { const p = wait.get(m.id); if (p) { wait.delete(m.id); m.error ? p.no(new Error(m.error)) : p.ok(m.dets); } return; }
+        clearTimeout(timer);
+        if (m.error) return fail(new Error(m.error));
+        up = true;
+        ok({ where: '后台线程', stop: () => fail(new Error('停了')),
+          detect: (cv, ts) => createImageBitmap(cv).then(img => new Promise((ok2, no2) => {
+            const id = ++n; wait.set(id, { ok: ok2, no: no2 });
+            w.postMessage({ id, img, ts }, [img]);
+            setTimeout(() => { if (wait.delete(id)) no2(new Error('后台线程没回应')); }, 3000);
+          })) });
+      };
+      w.postMessage({ init: { bundle: here('mp/vision_bundle.mjs'), js: files.wasmLoaderPath, wasm: files.wasmBinaryPath, model } });
+    });
+  }
+  async function onPage(mp, files, model) {
+    const make = mp.FaceDetector.createFromOptions(files, {
+      // an ordinary canvas: Safari 17+ would otherwise get an OffscreenCanvas, which iPhones handle badly
+      canvas: document.createElement('canvas'),
+      baseOptions: { modelAssetBuffer: new Uint8Array(model), delegate: 'CPU' },
+      runningMode: 'VIDEO', minDetectionConfidence: .5,
+    });
+    const det = await Promise.race([make, new Promise((_, no) => setTimeout(() => no(new Error('启动模型卡住')), 30000))]);
+    return { where: '页面', stop() {}, detect: (cv, ts) => Promise.resolve(det.detectForVideo(cv, ts).detections || []) };
+  }
+  // what's needed to start the model on the page instead; a phone where the worker wouldn't start remembers it
+  let made = null, workerErr = '';
+  try { if (localStorage.getItem('tici.noWorker')) workerErr = '上次没起来：' + localStorage.getItem('tici.noWorker'); } catch (e) {}
   function loadFace() {
     if (fd) return Promise.resolve();
     if (faceLoading) return faceLoading;
     modelState = 'loading'; loadErr = ''; tries++;
     const t0 = performance.now();
     faceLoading = (async () => {
-      stage = '加载程序';
-      const mp = await import(here('mp/vision_bundle.mjs'));
-      const kind = await mp.FilesetResolver.isSimdSupported() ? 'vision_wasm_internal' : 'vision_wasm_nosimd_internal';
-      stage = '下载模型';
-      const [js, wasm, model] = await Promise.all([
-        getBytes(kind + '.js', 'text/javascript'), getBytes(kind + '.wasm', 'application/wasm', true), getBytes('blaze_face_short_range.tflite', 'application/octet-stream')]);
+      if (!made) {
+        stage = '加载程序';
+        const mp = await import(here('mp/vision_bundle.mjs'));
+        const kind = await mp.FilesetResolver.isSimdSupported() ? 'vision_wasm_internal' : 'vision_wasm_nosimd_internal';
+        stage = '下载模型';
+        const [js, wasm, model] = await Promise.all([
+          getBytes(kind + '.js', 'text/javascript'), getBytes(kind + '.wasm', 'application/wasm', true), getBytes('blaze_face_short_range.tflite', 'application/octet-stream')]);
+        made = [mp, { wasmLoaderPath: URL.createObjectURL(js), wasmBinaryPath: URL.createObjectURL(wasm) }, await model.arrayBuffer()];
+      }
       stage = '启动模型';
-      const files = { wasmLoaderPath: URL.createObjectURL(js), wasmBinaryPath: URL.createObjectURL(wasm) };
-      const make = mp.FaceDetector.createFromOptions(files, {
-        // an ordinary canvas: Safari 17+ would otherwise get an OffscreenCanvas, which iPhones handle badly
-        canvas: document.createElement('canvas'),
-        baseOptions: { modelAssetBuffer: new Uint8Array(await model.arrayBuffer()), delegate: 'CPU' },
-        runningMode: 'VIDEO', minDetectionConfidence: .5,
-      });
-      fd = await Promise.race([make, new Promise((_, no) => setTimeout(() => no(new Error('启动模型卡住')), 30000))]);
+      let d = null;
+      if (!workerErr && window.Worker && window.createImageBitmap && window.OffscreenCanvas) {
+        try { d = await inWorker(made[1], made[2]); }
+        catch (e) { workerErr = e.message; try { localStorage.setItem('tici.noWorker', e.message); } catch (x) {} }
+      }
+      fd = d || await onPage(...made);
       modelState = 'ready'; stage = ''; pct = 0; loadMs = Math.round(performance.now() - t0); face = null;
     })().catch(e => {
-      modelState = 'failed'; loadErr = stage + '：' + ((e && e.message) || e); faceLoading = null;
+      modelState = 'failed'; loadErr = stage + '：' + ((e && e.message) || e);
       if (tries < 3) setTimeout(() => { if (!fd && !faceLoading) loadFace().catch(() => {}); }, 3000);   // try again by itself
       throw e;
-    });
+    }).finally(() => { faceLoading = null; });
     return faceLoading;
+  }
+  // the worker went wrong while running: carry on on the page
+  function toPage(why) {
+    const d = fd; fd = null; face = null; queue = []; cand = null;
+    workerErr = why; d.stop();
+    loadFace().catch(() => {});
   }
 
   // follow the face smoothly; jump when it's a new one
   function glide(nf) {
     if (!face || Math.hypot(nf[0] - face[0], nf[1] - face[1]) > nf[4] * 1.5) face = nf.slice();
     else {
-      for (let i = 0; i < 6; i++) face[i] += (nf[i] - face[i]) * .45;
+      for (let i = 0; i < 6; i++) face[i] += (nf[i] - face[i]) * .6;
       const n = Math.hypot(face[2], face[3]) || 1; face[2] /= n; face[3] /= n;
     }
   }
-  function fade() { if (face) { face[4] *= .85; face[5] *= .85; if (face[4] < 6) face = null; } }
+  function fade() { if (face) { face[4] *= .7; face[5] *= .7; if (face[4] < 6) face = null; } }
 
   // The model knows upright faces best, so the picture is shrunk (quicker) and turned to stand the person
   // up first. Which turn: the model will also "find" an upside-down face, with the eyes and mouth in the
@@ -103,9 +149,9 @@
   // after that the kept turn is looked at, and every ~3 s it's checked against upside down.
   const rCv = document.createElement('canvas'), rCtx = rCv.getContext('2d');
   let tryT = 0, misses = 0, locked = false, sinceScan = 0;
-  function detectAt(t) {
+  async function detectAt(t) {
     const W = video.videoWidth, H = video.videoHeight;
-    const s = Math.min(1, 480 / Math.max(W, H)), w = Math.round(W * s), h = Math.round(H * s);
+    const s = Math.min(1, 256 / Math.max(W, H)), w = Math.round(W * s), h = Math.round(H * s);
     const side = t % 180 !== 0, sw = side ? h : w, sh = side ? w : h;
     if (rCv.width !== sw || rCv.height !== sh) { rCv.width = sw; rCv.height = sh; }
     rCtx.setTransform(1, 0, 0, 1, sw / 2, sh / 2); rCtx.rotate(t * Math.PI / 180);
@@ -113,33 +159,44 @@
     lastTs = Math.max(lastTs + 1, Math.round(performance.now()));
     looked++;
     let best = null;
-    for (const x of fd.detectForVideo(rCv, lastTs).detections || [])
+    const e0 = epoch;
+    const dets = await fd.detect(rCv, lastTs);
+    if (e0 !== epoch) return null;                                 // the phone was turned meanwhile
+    for (const x of dets)
       if (x.keypoints && x.keypoints.length >= 4 && (!best || x.boundingBox.width > best.boundingBox.width)) best = x;
     if (!best) return null;
     const score = (best.categories && best.categories[0] && best.categories[0].score) || 0;
     return { t, s, sw, sh, W, H, det: best, score };
   }
   const ORDER = [0, 180, 90, 270];
-  let scanI = 0;
-  // all four ways (or just the kept way and upside down), the surest wins
-  function surest(from, turns) {
-    let hit = null;
-    for (const r of turns) { const h = detectAt((from + r) % 360); if (h && (!hit || h.score > hit.score + .02)) hit = h; }
-    return hit;
-  }
-  function findFaceModel() {
+  let scanI = 0, queue = [], cand = null, epoch = 0;
+  // One look per step, never several in a row: a look takes ~60 ms on a phone, and the picture (and the
+  // recording) stands still while it runs, so 4 looks at once came out as a jerky take. Comparing turns
+  // is spread over the next steps instead.
+  async function findFaceModel() {
     let hit;
     try {
-      if (!locked) {
-        // nobody yet: one way per look, in turn (cheap); once something shows up, compare all four
-        hit = detectAt((turnDeg + ORDER[scanI++ % 4]) % 360);
-        if (hit) hit = surest(turnDeg, ORDER);
-      } else if (++sinceScan >= 60) { sinceScan = 0; hit = surest(tryT, [0, 180]); }
-      else hit = detectAt(tryT);
-    } catch (e) { loadErr = '识别出错：' + e.message; return fade(); }
+      if (queue.length) {
+        const h = await detectAt(queue.shift());
+        if (h && (!cand || h.score > cand.score + .02)) cand = h;
+        if (queue.length) return;
+        hit = cand; cand = null;
+      } else if (!locked) {
+        // nobody yet: one way per look, in turn; once something shows up, compare the other three
+        const t = (turnDeg + ORDER[scanI++ % 4]) % 360;
+        cand = await detectAt(t);
+        if (cand) { queue = ORDER.map(r => (turnDeg + r) % 360).filter(x => x !== t); return; }
+      } else if (++sinceScan >= 15) {                                  // every ~3 s: check it isn't upside down
+        sinceScan = 0; cand = await detectAt(tryT); queue = [(tryT + 180) % 360]; return;
+      } else hit = await detectAt(tryT);
+    } catch (e) {
+      queue = []; cand = null; loadErr = '识别出错：' + e.message;
+      if (fd && fd.where === '后台线程') toPage(e.message);
+      return fade();
+    }
     if (!hit) {
       fade();
-      if (locked && ++misses >= 40) { misses = 0; locked = false; scanI = 0; }   // gone ~2 s: look all ways again
+      if (locked && ++misses >= 10) { misses = 0; locked = false; scanI = 0; }   // gone ~2 s: look all ways again
       return;
     }
     misses = 0; locked = true; found++; tryT = hit.t;
@@ -237,10 +294,7 @@ void main() {
       if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
       gl.viewport(0, 0, W, H);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
-      if (frameN++ % 3 === 0) {
-        if (fd) findFaceModel();
-        else face = null;                                           // no model (yet): leave the picture alone
-      }
+      if (!fd) face = null;                                         // no model (yet): leave the picture alone
       const f = face || [0, 0, 0, 1, 0, 0];
       gl.uniform1f(U.k, LEVELS[level] || 0);
       gl.uniform1f(U.slim, slimOn ? SLIM : 0);
@@ -253,29 +307,38 @@ void main() {
     else rafId = requestAnimationFrame(frame);
   }
 
+  // looking for the face runs on its own clock, not on every picture frame: ~8 times a second in the
+  // worker (quicker while comparing turns); ~3 times on the page, where each look holds the picture up
+  let lookGen = 0;
+  async function look(g) {
+    if (g !== lookGen) return;
+    if (fd && video && video.videoWidth && video.readyState >= 2) await findFaceModel();
+    if (g === lookGen) lookId = setTimeout(look, queue.length ? 60 : fd && fd.where === '页面' ? 350 : 120, g);
+  }
+
   window.Whiten = {
     isRunning: () => running,
     setLevel(n) { level = n; },
     setSlim(on) { slimOn = on; },
     setTurn(deg) {
       deg = ((deg % 360) + 360) % 360;
-      if (deg !== turnDeg) { turnDeg = deg; tryT = deg; misses = 0; locked = false; scanI = 0; face = null; }
+      if (deg !== turnDeg) { turnDeg = deg; tryT = deg; misses = 0; locked = false; scanI = 0; queue = []; cand = null; epoch++; face = null; }
     },
     loadFace,
     // what's happening, for the buttons: model 'idle' | 'loading' | 'ready' | 'failed'; face found or not
     status: () => ({ model: modelState, face: !!face, stage, pct }),
     // for the long-press details
-    debug: () => ({ model: modelState, stage, pct, err: loadErr, loadMs, tries, looked, found, turn: turnDeg, tryT, score: lastScore, face: face && face.map(v => Math.round(v * 100) / 100),
+    debug: () => ({ model: modelState, where: fd ? fd.where : '', workerErr, stage, pct, err: loadErr, loadMs, tries, looked, found, turn: turnDeg, tryT, score: lastScore, face: face && face.map(v => Math.round(v * 100) / 100),
       size: video ? video.videoWidth + '×' + video.videoHeight : '' }),
     start(v, canvas) {
       init(canvas); video = v;
       if (running) return;
-      running = true; face = null; frame();
+      running = true; face = null; queue = []; cand = null; frame(); look(++lookGen);
     },
     stop() {
       running = false;
       if (video && video.cancelVideoFrameCallback && vfcId) video.cancelVideoFrameCallback(vfcId);
-      cancelAnimationFrame(rafId); vfcId = rafId = 0;
+      cancelAnimationFrame(rafId); clearTimeout(lookId); lookGen++; vfcId = rafId = lookId = 0;
     },
   };
 })();

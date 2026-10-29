@@ -219,9 +219,8 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
       <ol>
         <li>台词显示在屏幕最上面，贴着前置镜头，看字就像在看镜头。</li>
         <li>竖着拿就录竖屏，横过来就录横屏，开着“竖排方向锁定”也行。第一次会问能不能使用“动作与方向”，点允许，台词才会跟着手机转。转好方向再点录像，录的中途别转。</li>
-        <li>点红色按钮开始录像，正常说话就行。说到哪，台词就滚到哪；停下来它也停。</li>
-        <li>念错、跳过一两句也没关系，它会找回你在读的位置。点台词里的任何一个字，也能直接跳过去。</li>
-        <li>听不清的时候，可以点左下角切到“匀速”。</li>
+        <li>点红色按钮开始录像，正常说话就行。你一说话台词就往下滚，停下来它也停；滚的快慢点“每秒 N 字”调，和你说话一样快就行。</li>
+        <li>念快了、念慢了，点台词里的任何一个字，就直接跳到那里。想一直匀速往下滚，点左下角切到“匀速”。</li>
         <li>右下角“美白”可以换 关 / 轻 / 中 / 强，只让脸白一点；“瘦脸”让脸瘦一点点。都只动脸，别的地方和清晰度不变。</li>
         <li>录完点“保存视频”，在弹出的菜单里选“存储视频”就进了相册。</li>
       </ol>
@@ -248,7 +247,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
       <button class="chip" id="closeShoot" type="button" aria-label="返回">‹ 返回</button>
       <button class="chip" id="modeBtn" type="button">跟声音</button>
       <button class="chip" id="fixBtn" type="button" hidden>画面转向</button>
-      <button class="chip" id="spdBtn" type="button" hidden>每秒 4 字</button>
+      <button class="chip" id="spdBtn" type="button">每秒 4 字</button>
     </div>
     <div class="r">
       <button class="chip" id="fxBtn" type="button">美白 中</button>
@@ -272,7 +271,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   </div>
 </div>
 
-<script src="whiten.js?v=11"></script>
+<script src="whiten.js?v=12"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -332,8 +331,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   const DIGITS = '零一二三四五六七八九';
   const isWord = ch => /[\p{L}\p{N}]/u.test(ch);
   const normCh = ch => /[0-9]/.test(ch) ? DIGITS[+ch] : ch.toLowerCase();
-  const normStr = s => [...s].filter(isWord).map(normCh);
-
+  
   let fsize = +(load('tici.fsize') || 30);
   pickSeg('fsize', fsize, v => { fsize = v; save('tici.fsize', String(v)); });
   // 30 fps by default: a talking head doesn't need 60, and each frame gets twice the data at the same file size
@@ -342,7 +340,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 
   let stream = null, rec = null, chunks = [], recStart = 0, timerId = 0;
   let norm = [], normSpans = [], pos = 0, shownPos = -1;
-  let follow = true, recog = null, listening = false, heardBase = '';
+  let follow = true, voiceT = 0, talking = false;
   let evenTimer = 0, lastBlob = null, wakeLock = null;
 
   function buildPrompter() {
@@ -366,7 +364,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
 
   function render(force) {
     if (!normSpans.length) return;
-    const p = Math.min(pos, normSpans.length - 1);
+    const p = Math.min(Math.floor(pos), normSpans.length - 1);
     if (!force && p === shownPos) return;
     // mark read / current
     const from = Math.max(0, Math.min(p, shownPos < 0 ? 0 : shownPos) - 1);
@@ -382,39 +380,6 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     rl.style.top = `calc(${tall ? '10px' : 'var(--sat) + 8px'} + ${readY() + fsize * 1.45 / 2 - 9}px)`;
   }
 
-  // LCS length between two short arrays
-  function lcs(a, b) {
-    const m = a.length, n = b.length; let prev = new Array(n + 1).fill(0), cur = new Array(n + 1).fill(0);
-    for (let i = 1; i <= m; i++) {
-      for (let j = 1; j <= n; j++) cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
-      [prev, cur] = [cur, prev];
-    }
-    return prev[n];
-  }
-
-  // find where in the script the last few heard characters end
-  function align(heard) {
-    const tail = heard.slice(-10);
-    if (tail.length < 3) return;
-    const L = tail.length + 4;
-    const lo = Math.max(tail.length - 2, pos - 20), hi = Math.min(norm.length, pos + 160);
-    let best = -1, bestE = -1;
-    for (let e = lo; e <= hi; e++) {
-      const seg = norm.slice(Math.max(0, e - L), e);
-      let s = lcs(tail, seg);
-      if (seg[seg.length - 1] === tail[tail.length - 1]) s += 0.6;        // ends on the same char
-      else if (seg[seg.length - 1] === tail[tail.length - 2]) s += 0.3;
-      s -= Math.abs(e - pos) * 0.004;                                     // prefer staying close
-      if (e < pos) s -= 0.5;                                              // going back needs a clearer match
-      if (s > best) { best = s; bestE = e; }
-    }
-    const need = Math.max(3, Math.ceil(tail.length * 0.55));
-    if (best >= need && bestE >= 0) {
-      pos = Math.max(0, Math.min(norm.length - 1, bestE));
-      render();
-    }
-  }
-
   function setHeard(text, on) {
     $('heardT').textContent = text;
     $('heard').classList.toggle('on', !!on);
@@ -424,68 +389,31 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     clearTimeout(toast._t); toast._t = setTimeout(() => t.hidden = true, ms);
   }
 
-  // ---------- speech recognition (Apple, built in) ----------
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let audioStarted = null;
-  function startListen() {
-    if (!SR) { toast('这个浏览器听不了声音，已切到匀速'); setFollow(false); return; }
-    if (listening) return;
-    recog = new SR();
-    recog.lang = 'zh-CN'; recog.continuous = true; recog.interimResults = true; recog.maxAlternatives = 1;
-    heardBase = '';
-    recog.onresult = e => {
-      let txt = '';
-      for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
-      const n = normStr(txt);
-      setHeard('听到：' + txt.slice(-14), true);
-      if (follow) align(n);
-    };
-    recog.onerror = e => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        listening = false; setFollow(false);
-        toast('没拿到语音识别权限，已切到匀速。可在 设置 › Safari 里打开麦克风和语音识别');
-      } else if (e.error === 'audio-capture') {
-        listening = false; setFollow(false);
-        toast('麦克风被录像占用，听不到声音，已切到匀速');
-      }
-    };
-    recog.onend = () => {
-      // iOS stops every so often; keep going while we still want to listen
-      if (listening) { try { recog.start(); } catch (e) { setTimeout(() => listening && recog && recog.start(), 300); } }
-      else setHeard(follow ? '没在听' : '匀速滚动中', false);
-    };
-    recog.onaudiostart = () => { if (audioStarted) audioStarted(); };
-    listening = true;
-    try { recog.start(); setHeard('在听…', true); } catch (e) { listening = false; }
-  }
-  function stopListen() {
-    listening = false;
-    if (recog) { try { recog.stop(); } catch (e) {} recog = null; }
-  }
-
-  // ---------- even-speed fallback ----------
+  // ---------- scrolling ----------
+  // 跟声音: scroll while you're talking, stop when you stop. Heard from the recording's own microphone
+  // (the level meter below), not from Apple's speech recognition: on iPhone that takes the microphone
+  // away from the recording, and the take came out with no sound.
   const SPEEDS = [3, 4, 5, 6, 7];
   let speed = Math.round(+(load('tici.speed') || 4));
   if (!SPEEDS.includes(speed)) speed = 4;
   $('spdBtn').textContent = `每秒 ${speed} 字`;
   $('spdBtn').onclick = () => {
-    speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length];
+    speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]; save('tici.speed', String(speed));
     $('spdBtn').textContent = `每秒 ${speed} 字`;
-    if (rec && rec.state === 'recording' && !follow) startEven();
+    if (rec && rec.state === 'recording') startEven();
   };
   function setFollow(on) {
     follow = on;
     $('modeBtn').textContent = on ? '跟声音' : '匀速';
-    $('spdBtn').hidden = on; syncBar();
-    clearInterval(evenTimer);
-    if (!on && rec && rec.state === 'recording') startEven();
-    if (on && rec && rec.state === 'recording') startListen();
-    if (!on) setHeard('匀速滚动中', false);
+    if (rec && rec.state === 'recording') { startEven(); setHeard(on ? '说话就滚，停下就停' : '匀速滚动中', on); }
   }
   function startEven() {
     clearInterval(evenTimer);
     const cps = speed;
-    evenTimer = setInterval(() => { pos = Math.min(norm.length - 1, pos + cps / 4); render(); }, 250);
+    evenTimer = setInterval(() => {
+      if (follow && Date.now() - voiceT > 600) return;              // not talking (a short breath doesn't count)
+      pos = Math.min(norm.length - 1, pos + cps / 10); render();
+    }, 100);
   }
   $('modeBtn').onclick = () => setFollow(!follow);
 
@@ -601,7 +529,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
       if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(step); else requestAnimationFrame(step);
     };
     step();
-    return turnCv.captureStream(fpsPick).getVideoTracks()[0];
+    return turnCv.captureStream().getVideoTracks()[0];
   }
 
   // Safari often hands out 640×480 unless asked again; ask for the biggest it will give.
@@ -757,7 +685,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (!window.Whiten) return toast('美白程序没加载上（whiten.js）', 5000);
     const d = Whiten.debug();
     const m = { idle: '没开始', loading: '加载中', ready: '已加载', failed: '加载失败' }[d.model] || d.model;
-    toast(`人脸模型：${m}${d.model === 'loading' ? ` · ${d.stage}${d.pct ? ' ' + d.pct + '%' : ''}` : ''}${d.loadMs ? `（${(d.loadMs / 1000).toFixed(1)} 秒）` : ''}${d.tries > 1 ? ` 第${d.tries}次` : ''}${d.err ? ' · ' + d.err : ''}
+    toast(`人脸模型：${m}${d.model === 'loading' ? ` · ${d.stage}${d.pct ? ' ' + d.pct + '%' : ''}` : ''}${d.loadMs ? `（${(d.loadMs / 1000).toFixed(1)} 秒）` : ''}${d.tries > 1 ? ` 第${d.tries}次` : ''}${d.where ? ' · 在' + d.where + '跑' : ''}${d.err ? ' · ' + d.err : ''}${d.workerErr ? '（后台线程：' + d.workerErr + '）' : ''}
 `
       + `画面 ${d.size} · 找了 ${d.looked} 次，找到 ${d.found} 次${d.face ? ` · 现在有脸（把握 ${d.score}）` : ' · 现在没脸'}
 `
@@ -780,7 +708,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     if (window.Whiten) Whiten.stop();
     $('fx').hidden = true;
     stopRec(true);
-    stopListen(); clearInterval(evenTimer);
+    clearInterval(evenTimer);
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = null; $('cam').srcObject = null;
     $('shoot').hidden = true; document.body.style.overflow = '';
@@ -804,7 +732,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     return list.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
   }
   // ---------- mic level meter: shows whether the recording is actually getting sound ----------
-  let actx = null, meterRaf = 0, meterPeak = 0, silentWarned = false;
+  let actx = null, meterRaf = 0, meterPeak = 0, silentWarned = false, floor = .02;
   function meter(track) {
     cancelAnimationFrame(meterRaf); meterPeak = 0; silentWarned = false;
     $('mic').hidden = !track;
@@ -821,9 +749,14 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
       const lvl = Math.min(1, Math.sqrt(sum / buf.length) * 6);
       meterPeak = Math.max(meterPeak, lvl);
       $('micI').style.width = (lvl * 100).toFixed(0) + '%';
+      // talking = clearly louder than the room's own noise, which is followed slowly
+      floor = lvl < floor ? lvl : floor + (lvl - floor) * .002;
+      if (lvl > Math.max(.06, floor * 3)) voiceT = Date.now();
+      const t = Date.now() - voiceT < 600;
+      if (t !== talking && rec && rec.state === 'recording' && follow) { talking = t; setHeard(t ? '在说话 · 台词在滚' : '停着 · 说话就接着滚', t); }
       if (!silentWarned && rec && rec.state === 'recording' && Date.now() - recStart > 4000 && meterPeak < 0.02) {
         silentWarned = true;
-        toast(follow ? '录像收不到声音：麦克风可能被“跟声音”占走了。点左下角切到“匀速”再录试试' : '录像收不到声音，请检查麦克风权限', 5000);
+        toast('录像收不到声音：请检查麦克风权限，把别的在用麦克风的 App（微信通话、录音）关掉再录', 5000);
       }
       meterRaf = requestAnimationFrame(loop);
     };
@@ -837,30 +770,25 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     $('recBtn').disabled = true; setHeard('准备中…', true);
     // must be created inside the tap
     try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {}
-    // Start the recogniser first, then take a fresh mic track, so the recording
-    // and the recogniser share the audio session instead of fighting over it.
-    if (follow) {
-      startListen();
-      await new Promise(r => { audioStarted = r; setTimeout(r, 1500); });
-      audioStarted = null;
-    }
-    let aTrack = null;
+    // the microphone that came with the camera; only if it's gone, ask for it again
     try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch (e) {}
-    try { aTrack =(await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })).getAudioTracks()[0]; } catch (e) {}
-    recAudio = aTrack;
-    if (!aTrack) aTrack = stream.getAudioTracks().find(t => t.readyState === 'live') || null;
+    let aTrack = stream.getAudioTracks().find(t => t.readyState === 'live') || null;
+    if (!aTrack) {
+      try { aTrack = recAudio = (await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })).getAudioTracks()[0]; } catch (e) {}
+    }
     // with whitening on, record the processed picture instead of the raw camera
     let vTrack = stream.getVideoTracks()[0];
     if (turn && fix && HTMLCanvasElement.prototype.captureStream) { fxTrack = turnedTrack(fix); vTrack = fxTrack; }
-    else if (fxOn() && $('fx').captureStream) { fxTrack = $('fx').captureStream(fpsPick).getVideoTracks()[0]; vTrack = fxTrack; }
+    else if (fxOn() && $('fx').captureStream) { fxTrack = $('fx').captureStream().getVideoTracks()[0]; vTrack = fxTrack; }
     const recStream = new MediaStream([vTrack].concat(aTrack ? [aTrack] : []));
     starting = false; $('recBtn').disabled = false;
-    setHeard(follow ? '在听…说吧' : '匀速滚动中', follow);
+    talking = false; voiceT = 0;
+    setHeard(follow ? '说话就滚，停下就停' : '匀速滚动中', follow);
     const type = pickType();
     recBps = fpsPick === 60 ? 8_000_000 : 6_000_000;
     try { rec = new MediaRecorder(recStream, type ? { mimeType: type, videoBitsPerSecond: recBps, audioBitsPerSecond: 128_000 } : undefined); }
     catch (e) { toast('这个浏览器录不了像'); return; }
-    if (!aTrack) toast('没拿到麦克风，录出来的视频会没有声音', 3500);
+    if (!aTrack) { toast('没拿到麦克风，录出来的视频会没有声音；台词改成匀速滚', 4000); if (follow) setFollow(false); }
     chunks = [];
     recBytes = 0;
     rec.ondataavailable = e => { if (e.data && e.data.size) { chunks.push(e.data); recBytes += e.data.size; } };
@@ -874,14 +802,14 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
       $('timer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')} · ${sizeNow(s)}`;
     }, 500);
     meter(aTrack);
-    if (!follow) startEven();
+    startEven();
   }
   // some browsers hand the data over only at the end (just a header before that), so guess from the bit rate until real data comes in
   const sizeNow = s => recBytes > 1048576 ? (recBytes / 1048576).toFixed(0) + 'MB' : '约' + (recBps * s / 8 / 1048576).toFixed(0) + 'MB';
   let discard = false, saved = false;
   function stopRec(drop) {
     discard = !!drop;
-    clearInterval(timerId); clearInterval(evenTimer); stopListen();
+    clearInterval(timerId); clearInterval(evenTimer);
     $('recBtn').classList.remove('on'); $('recBtn').setAttribute('aria-label', '开始录像');
     $('timer').classList.remove('on');
     if (rec && rec.state !== 'inactive') rec.stop();
@@ -969,8 +897,8 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
     toast(`没弹出保存菜单（${why}）。点下面“保存不了？点这里打开视频”，再长按保存`, 6000);
   };
 
-  // test hook for the alignment logic (no answers here, safe to expose)
-  window.__tici = { align: t => { align(normStr(t)); return pos; }, setScript: s => { ta.value = s; buildPrompter(); }, get pos() { return pos; }, set pos(v) { pos = v; } };
+  // test hook (no answers here, safe to expose)
+  window.__tici = { setScript: s => { ta.value = s; buildPrompter(); }, get pos() { return pos; }, set pos(v) { pos = v; } };
 })();
 </script>
 </body>
