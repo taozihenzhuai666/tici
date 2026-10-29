@@ -273,7 +273,7 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   </div>
 </div>
 
-<script src="whiten.js?v=9"></script>
+<script src="whiten.js?v=10"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -513,9 +513,16 @@ textarea:focus, input:focus-visible, button:focus-visible { outline: 2px solid v
   function onTilt(e) {
     if (e.beta == null || e.gamma == null) return;
     let h = held;
-    // phone on its side: gamma near ±90; past upright (screen facing down a little) beta jumps by 180 and gamma flips
-    if (Math.abs(e.gamma) > 55) h = (e.gamma > 0) === (Math.abs(e.beta) < 90) ? 90 : -90;
-    else if (e.beta > 55 && Math.abs(e.gamma) < 30) h = 0;
+    // which way is up across the screen. Not from gamma alone: with the phone standing nearly straight up
+    // (how it's held to film) gamma swings wildly between ±90, which read as "turned" when it wasn't.
+    const b = e.beta * Math.PI / 180, g = e.gamma * Math.PI / 180;
+    const ux = -Math.cos(b) * Math.sin(g), uy = Math.sin(b);   // up, in the screen's terms (x right, y top)
+    if (Math.hypot(ux, uy) > .5) {                               // lying nearly flat: no way to tell, keep as is
+      const a = Math.atan2(ux, uy) * 180 / Math.PI;              // 0 upright, -90 top to the right, 90 top to the left
+      if (Math.abs(a) < 30) h = 0;
+      else if (a < -60 && a > -120) h = 90;
+      else if (a > 60 && a < 120) h = -90;
+    }
     // only act once it has stayed put a moment, so the page's own turn (lock off) gets there first
     if (h !== heldWant) { heldWant = h; heldT = Date.now(); }
     if (heldWant !== held && Date.now() - heldT > 700) { held = heldWant; applyTurn(); }
